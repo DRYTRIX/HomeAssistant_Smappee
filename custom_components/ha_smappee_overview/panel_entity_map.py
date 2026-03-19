@@ -8,7 +8,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
 
-# Sensor keys from sensors.SENSOR_TYPES (service location device)
+# Sensor keys from sensor.SENSOR_TYPES (service location device)
 PANEL_SENSOR_KEYS: tuple[str, ...] = (
     "grid_import",
     "grid_export",
