@@ -2,6 +2,7 @@
 
 from .alerts import AlertItem
 from .consumption import ConsumptionSummary, PhaseMetrics, Submeter
+from .discovery import DiscoveryEdge, DiscoveryNode, DiscoverySnapshot
 from .ev_charger import EVCharger, ConnectorState
 from .features import ChargerFeatures, InstallationFeatures
 from .installation import Installation
@@ -19,6 +20,9 @@ __all__ = [
     "ChargerFeatures",
     "ConnectorState",
     "ConsumptionSummary",
+    "DiscoveryEdge",
+    "DiscoveryNode",
+    "DiscoverySnapshot",
     "EVCharger",
     "Installation",
     "InstallationFeatures",

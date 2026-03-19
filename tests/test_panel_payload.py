@@ -81,6 +81,10 @@ def mock_coordinator():
 
 def test_build_full_panel_payload_schema(mock_hass, mock_coordinator):
     payload = build_full_panel_payload(mock_hass, mock_coordinator)
+    assert "discovery" in payload
+    assert "nodes" in payload["discovery"]
+    assert isinstance(payload["discovery"]["nodes"], list)
+    assert "discovery_partial" in payload["diagnostics"]
     assert payload.get("schema_version") == 2
     assert "meta" in payload
     assert payload["meta"]["schema_version"] == 2
@@ -94,6 +98,8 @@ def test_build_full_panel_payload_schema(mock_hass, mock_coordinator):
     assert "economics" in payload
     assert "diagnostics" in payload
     assert payload["economics"]["belgium_cap_compliant"] is True
+    assert "energy_intelligence" in payload
+    assert payload["energy_intelligence"]["schema_version"] == 1
 
 
 def test_sessions_enriched_cost_api_and_tariffs_all(mock_hass):
@@ -214,3 +220,73 @@ def test_overview_context_active_ev_hints(mock_hass):
     factors = {x["factor"] for x in hints[0]["limit_chain"]}
     assert "hardware_max" in factors
     assert "set_current" in factors
+    assert "explanation" in hints[0]
+    ex = hints[0]["explanation"]
+    assert ex["reason"] == "manual_pause"
+    assert "suggestions" in ex
+
+
+def test_overview_context_connector_explanations(mock_hass):
+    from ha_smappee_overview.models.features import ChargerFeatures
+
+    coord = MagicMock()
+    entry = MagicMock()
+    entry.entry_id = "e5"
+    entry.unique_id = "u5"
+    entry.options = {}
+    entry.data = {"service_location_id": 1}
+    coord.config_entry = entry
+    coord.last_update_success = True
+    ch = EVCharger(
+        serial="CH1",
+        name="Wallbox",
+        connectors=[ConnectorState(position=1, mode="NORMAL")],
+    )
+    coord.data = SmappeeCoordinatorData(
+        installation=Installation(id=1, name="Home"),
+        chargers=[ch],
+        charger_features={"CH1": ChargerFeatures(serial="CH1", max_current_a=32.0)},
+    )
+    payload = build_full_panel_payload(mock_hass, coord)
+    ce = payload["overview_context"]["connector_explanations"]
+    assert len(ce) == 1
+    assert ce[0]["charger_serial"] == "CH1"
+    assert ce[0]["connector"] == 1
+    expl = ce[0]["explanation"]
+    assert expl["status"] in ("idle", "unknown")
+    assert "message" in expl
+    assert isinstance(expl["suggestions"], list)
+
+
+def test_advanced_meta_defaults(mock_hass, mock_coordinator):
+    payload = build_full_panel_payload(mock_hass, mock_coordinator)
+    assert payload["meta"]["advanced_panel_allowed"] is False
+    assert payload["meta"]["advanced_data_included"] is False
+    assert "advanced" not in payload
+
+
+def test_advanced_request_without_option(mock_hass, mock_coordinator):
+    payload = build_full_panel_payload(
+        mock_hass, mock_coordinator, include_advanced_requested=True
+    )
+    assert payload["meta"]["advanced_panel_allowed"] is False
+    assert payload["meta"]["advanced_data_included"] is False
+    assert "advanced" not in payload
+
+
+def test_advanced_payload_when_allowed_and_requested(mock_hass, mock_coordinator):
+    mock_coordinator.config_entry.options["advanced_panel"] = True
+    sess = mock_coordinator.data.sessions_recent[0]
+    sess.raw = {"apiField": 1, "other": "x"}
+    payload = build_full_panel_payload(
+        mock_hass, mock_coordinator, include_advanced_requested=True
+    )
+    assert payload["meta"]["advanced_panel_allowed"] is True
+    assert payload["meta"]["advanced_data_included"] is True
+    assert "advanced" in payload
+    adv = payload["advanced"]
+    assert adv["coordinator_state"]["config_entry_id"] == "test_entry"
+    assert adv["coordinator_state"]["last_update_success"] is True
+    assert "apiField" in adv["session_json_keys_union"]
+    assert adv["raw_excerpts"]["sessions"]
+    assert adv["raw_excerpts"]["sessions"][0]["id"] == "s1"

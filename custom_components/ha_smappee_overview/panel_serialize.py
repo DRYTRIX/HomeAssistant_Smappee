@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
+from .const import DISCOVERY_STALE_POLL_MULTIPLIER
 from .coordinator_data import SmappeeCoordinatorData
 from .models import ChargingSession, ConsumptionSummary, EVCharger
 
@@ -154,4 +156,66 @@ def panel_data_dict(d: SmappeeCoordinatorData) -> dict[str, Any]:
         else None,
         "last_error": d.last_error,
         "api_partial": d.api_partial,
+    }
+
+
+def build_discovery_payload(
+    d: SmappeeCoordinatorData,
+    *,
+    update_interval_s: int,
+    coordinator_last_update_success: bool,
+    consumption_stale: bool,
+) -> dict[str, Any]:
+    """Serialize discovery topology and per-node connectivity hints for the panel."""
+    now = datetime.now(UTC)
+    snap = d.discovery
+    threshold_s = float(max(1, update_interval_s) * DISCOVERY_STALE_POLL_MULTIPLIER)
+    nodes_out: list[dict[str, Any]] = []
+    for n in snap.nodes:
+        last_seen = d.discovery_last_observed.get(n.node_id, snap.generated_at or now)
+        api_seen_iso = n.api_last_seen.isoformat() if n.api_last_seen else None
+        if n.api_online is True:
+            conn = "ok"
+        elif n.api_online is False:
+            conn = "offline"
+        else:
+            age_s = (now - last_seen).total_seconds()
+            if age_s > threshold_s:
+                conn = "stale"
+            elif not coordinator_last_update_success:
+                conn = "unknown"
+            else:
+                conn = "ok"
+        nodes_out.append(
+            {
+                "id": n.node_id,
+                "kind": n.kind,
+                "label": n.label,
+                "serial": n.serial,
+                "parent_serial": n.parent_serial,
+                "source_sl_devices": n.source_sl_devices,
+                "source_charging_api": n.source_charging_api,
+                "availability": n.availability,
+                "connector_count": n.connector_count,
+                "health": {
+                    "connectivity": conn,
+                    "last_seen_iso": last_seen.isoformat(),
+                    "api_last_seen_iso": api_seen_iso,
+                },
+            }
+        )
+    summary = {"ok": 0, "offline": 0, "stale": 0, "unknown": 0}
+    for item in nodes_out:
+        key = item["health"]["connectivity"]
+        if key in summary:
+            summary[key] += 1
+    return {
+        "partial": snap.partial,
+        "notes": list(snap.notes),
+        "sources": dict(snap.sources),
+        "generated_at": snap.generated_at.isoformat() if snap.generated_at else None,
+        "edges": [{"parent": e.parent_id, "child": e.child_id} for e in snap.edges],
+        "nodes": nodes_out,
+        "summary": summary,
+        "consumption_stale_hint": consumption_stale,
     }

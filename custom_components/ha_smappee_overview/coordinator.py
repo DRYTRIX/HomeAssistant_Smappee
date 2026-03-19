@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import SmappeeAPIClient, SmappeeApiError, SmappeeDomainAPI
 from .api.auth import SmappeeAuthError
+from .api.discovery import iter_device_dicts, merge_discovery
 from .api.endpoints import parse_consumption_summary, phase_metrics_has_three_phase
 from .const import (
     CONF_CHARGING_PARK_ID_OVERRIDE,
@@ -62,6 +63,8 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
         self._api = SmappeeDomainAPI(client)
         self._service_location_id = int(entry.data[CONF_SERVICE_LOCATION_ID])
         self._push_listeners: list[Callable[[SmappeeCoordinatorData], None]] = []
+        self._discovery_detail_done: bool = False
+        self._discovery_ever_fetched_detail: bool = False
         update_interval = timedelta(
             seconds=int(
                 entry.options.get("update_interval")
@@ -111,6 +114,8 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
                 last_successful_update=datetime.now(UTC),
                 last_error=data.last_error,
                 api_partial=data.api_partial,
+                discovery=data.discovery,
+                discovery_last_observed=data.discovery_last_observed,
             )
         self.async_set_updated_data(data)
         for cb in list(self._push_listeners):
@@ -130,6 +135,25 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
         cf = self.data.charger_features.get(serial)
         if cf:
             cf.supports_led_brightness = supported
+
+    async def _maybe_enrich_installation_devices(
+        self, installation: Installation | None
+    ) -> Installation | None:
+        """Merge GET servicelocation/{id} when the list payload has no device entries."""
+        if installation is None:
+            return None
+        raw = installation.raw if isinstance(installation.raw, dict) else {}
+        if iter_device_dicts(raw):
+            return installation
+        if self._discovery_detail_done:
+            return installation
+        detail = await self._api.get_service_location_detail(self._service_location_id)
+        self._discovery_detail_done = True
+        self._discovery_ever_fetched_detail = True
+        if detail is None:
+            return installation
+        merged = {**raw, **detail}
+        return replace(installation, raw=merged)
 
     async def _async_update_data(self) -> SmappeeCoordinatorData:
         partial = False
@@ -194,9 +218,11 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
             return_exceptions=True,
         )
 
-        if isinstance(c_res, SmappeeAuthError):
-            self.config_entry.async_start_reauth(self.hass)
-            raise ConfigEntryAuthFailed(str(c_res)) from c_res
+        for res in (c_res, ch_res, t_res, a_res):
+            if isinstance(res, SmappeeAuthError):
+                self.config_entry.async_start_reauth(self.hass)
+                raise ConfigEntryAuthFailed(str(res)) from res
+
         if isinstance(c_res, Exception):
             last_err = str(c_res)
             partial = True
@@ -204,8 +230,6 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
         else:
             consumption = c_res
 
-        if isinstance(ch_res, SmappeeAuthError):
-            raise ConfigEntryAuthFailed(str(ch_res)) from ch_res
         if isinstance(ch_res, Exception):
             last_err = last_err or str(ch_res)
             partial = True
@@ -214,6 +238,8 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
             chargers = ch_res
 
         if isinstance(t_res, Exception):
+            last_err = last_err or str(t_res)
+            partial = True
             tariffs = self.data.tariffs
         else:
             tariffs_list, tariffs_ok = t_res
@@ -221,6 +247,8 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
             inst_features = replace(inst_features, tariffs_available=tariffs_ok)
 
         if isinstance(a_res, Exception):
+            last_err = last_err or str(a_res)
+            partial = True
             alerts_list = self.data.alerts
         else:
             alerts_items, alerts_ok = a_res
@@ -281,6 +309,9 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
                 return_exceptions=True,
             )
             for result in sess_out:
+                if isinstance(result, SmappeeAuthError):
+                    self.config_entry.async_start_reauth(self.hass)
+                    raise ConfigEntryAuthFailed(str(result)) from result
                 if isinstance(result, Exception):
                     partial = True
                     continue
@@ -313,6 +344,22 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
             reim, sessions_recent + sessions_active
         )
 
+        device_rows = (
+            iter_device_dicts(installation.raw)
+            if installation and isinstance(installation.raw, dict)
+            else []
+        )
+        discovery_snapshot = merge_discovery(
+            installation,
+            chargers,
+            device_rows=device_rows,
+            detail_fetch_used=self._discovery_ever_fetched_detail,
+        )
+        now_ts = datetime.now(UTC)
+        last_observed = dict(self.data.discovery_last_observed)
+        for node in discovery_snapshot.nodes:
+            last_observed[node.node_id] = now_ts
+
         out = SmappeeCoordinatorData(
             installation=installation,
             installation_features=inst_features,
@@ -328,10 +375,11 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
             last_successful_update=self.data.last_successful_update,
             last_error=last_err,
             api_partial=partial or (consumption.stale if consumption else False),
+            discovery=discovery_snapshot,
+            discovery_last_observed=last_observed,
         )
-        if consumption and not consumption.stale:
-            out.last_successful_update = datetime.now(UTC)
-        elif not partial and consumption:
+        # Only advance "last good sync" when we have non-stale consumption data.
+        if consumption is not None and not consumption.stale:
             out.last_successful_update = datetime.now(UTC)
         return out
 
@@ -376,3 +424,48 @@ class SmappeeOverviewCoordinator(DataUpdateCoordinator[SmappeeCoordinatorData]):
     def panel_data_dict(self) -> dict[str, Any]:
         """Serialize for WebSocket panel."""
         return build_panel_data_dict(self.data)
+
+    async def async_set_connector_mode(
+        self,
+        station_serial: str,
+        connector_position: int,
+        mode: str,
+        *,
+        limit_percent: int | None = None,
+        current_a: float | None = None,
+    ) -> None:
+        """Write charging mode / limit via domain API (single write path)."""
+        try:
+            await self._api.set_connector_charging_mode(
+                station_serial,
+                connector_position,
+                mode,
+                limit_percent=limit_percent,
+                current_a=current_a,
+            )
+        except SmappeeAuthError:
+            self.config_entry.async_start_reauth(self.hass)
+            raise
+
+    async def async_set_led_brightness(
+        self, station_serial: str, brightness_pct: int
+    ) -> None:
+        """Set charger LED brightness (raises SmappeeApiError on failure)."""
+        try:
+            await self._api.set_station_led_brightness(station_serial, brightness_pct)
+        except SmappeeAuthError:
+            self.config_entry.async_start_reauth(self.hass)
+            raise
+
+    async def async_set_charger_availability(
+        self, station_serial: str, available: bool
+    ) -> bool:
+        """PATCH availability; returns False if API rejects; updates feature flags."""
+        try:
+            ok = await self._api.set_station_availability(station_serial, available)
+        except SmappeeAuthError:
+            self.config_entry.async_start_reauth(self.hass)
+            raise
+        if not ok:
+            self.mark_charger_availability_api_unsupported(station_serial)
+        return ok

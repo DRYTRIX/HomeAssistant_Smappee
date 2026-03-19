@@ -11,6 +11,8 @@ import type { HomeAssistant } from "./types/hass.js";
 import type { PanelProps } from "./types/hass.js";
 import type { PanelPayload, TabId } from "./types/panel.js";
 import { renderChargersTab } from "./ui/chargers.js";
+import { renderDevicesTab } from "./ui/devices-tab.js";
+import { renderAdvancedPanel } from "./ui/advanced-panel.js";
 import { renderDiagnosticsTab } from "./ui/diagnostics.js";
 import { renderEconomicsTab } from "./ui/economics.js";
 import { renderOverviewTab } from "./ui/overview/overview-tab.js";
@@ -312,6 +314,77 @@ export class HaSmappeeOverviewPanel extends LitElement {
     .conn-title {
       margin-bottom: 8px;
     }
+    .conn-title-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .exp-expl-wrap {
+      margin: 8px 0;
+    }
+    .exp-badge {
+      cursor: help;
+      font-weight: 500;
+    }
+    .exp-badge--warn {
+      background: color-mix(
+        in srgb,
+        var(--warning-color, #b85c00) 22%,
+        transparent
+      );
+    }
+    .exp-badge--info {
+      background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+    }
+    .exp-badge--neutral {
+      background: var(--disabled-color);
+    }
+    .exp-details {
+      margin-top: 6px;
+    }
+    .exp-details summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--secondary-text-color);
+    }
+    .exp-expl-msg {
+      margin: 8px 0 0;
+    }
+    .exp-suggest-h,
+    .exp-chain-h {
+      font-size: 12px;
+      font-weight: 600;
+      margin: 10px 0 4px;
+      color: var(--secondary-text-color);
+    }
+    .exp-suggest {
+      margin: 0 0 8px;
+      padding-left: 20px;
+      font-size: 13px;
+    }
+    .exp-chain-list {
+      margin: 0 0 8px;
+      padding-left: 20px;
+      font-size: 13px;
+    }
+    .exp-chain-li {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      align-items: baseline;
+      margin-bottom: 4px;
+    }
+    .exp-chain-label {
+      color: var(--primary-text-color);
+    }
+    .exp-chain-src {
+      font-size: 11px;
+      color: var(--secondary-text-color);
+    }
+    .exp-json {
+      margin-top: 8px;
+    }
     .live {
       color: var(--success-color, #2e7d32);
       font-weight: 600;
@@ -375,6 +448,47 @@ export class HaSmappeeOverviewPanel extends LitElement {
     .table-wrap {
       overflow-x: auto;
     }
+    .advanced-region {
+      margin-top: 20px;
+      border-left: 3px solid var(--warning-color);
+      padding-left: 12px;
+    }
+    .adv-details {
+      margin-top: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--divider-color);
+    }
+    .adv-details summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--primary-text-color);
+    }
+    .adv-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+    .adv-table td {
+      padding: 4px 8px 4px 0;
+      border-bottom: 1px solid var(--divider-color);
+    }
+    .adv-hint {
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--divider-color);
+    }
+    .adv-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      user-select: none;
+    }
+    .adv-toggle input {
+      margin: 0;
+    }
     .json-pre {
       overflow: auto;
       max-height: 280px;
@@ -396,6 +510,76 @@ export class HaSmappeeOverviewPanel extends LitElement {
     .tariff-list {
       margin: 0;
       padding-left: 20px;
+    }
+    .ei-title {
+      margin-bottom: 4px;
+    }
+    .ei-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .ei-split-bar {
+      display: flex;
+      height: 24px;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-top: 8px;
+      border: 1px solid var(--divider-color);
+    }
+    .ei-split-solar {
+      height: 100%;
+      background: color-mix(
+        in srgb,
+        var(--success-color, #2e7d32) 55%,
+        transparent
+      );
+    }
+    .ei-split-grid {
+      height: 100%;
+      background: color-mix(
+        in srgb,
+        var(--primary-color) 35%,
+        var(--disabled-color)
+      );
+    }
+    .ei-split-legend {
+      margin-top: 8px;
+    }
+    .ei-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .ei-dot.solar {
+      background: var(--success-color, #2e7d32);
+    }
+    .ei-dot.grid {
+      background: var(--primary-color);
+    }
+    .badge.warn {
+      background: color-mix(
+        in srgb,
+        var(--warning-color) 45%,
+        var(--disabled-color)
+      );
+      color: var(--primary-text-color);
+    }
+    .ei-svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin-top: 8px;
+    }
+    .ei-assumptions summary {
+      list-style: none;
+    }
+    .ei-assumptions summary::-webkit-details-marker {
+      display: none;
     }
     .skel-layout {
       padding: 8px 0;
@@ -435,6 +619,54 @@ export class HaSmappeeOverviewPanel extends LitElement {
     }
     .skel-card {
       height: 120px;
+    }
+    .sess-toggle {
+      flex-direction: row !important;
+      align-items: center;
+      gap: 8px;
+    }
+    .sess-row {
+      cursor: pointer;
+    }
+    .sess-row:hover {
+      background: color-mix(in srgb, var(--primary-color) 6%, transparent);
+    }
+    .sess-group-head td {
+      background: var(--secondary-background-color, rgba(127, 127, 127, 0.1));
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .sess-detail {
+      padding: 12px;
+      text-align: left;
+    }
+    .sess-detail-row td {
+      padding-top: 0;
+      border-bottom: 1px solid var(--divider-color);
+    }
+    .econ-period-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .econ-period-tabs button {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--divider-color);
+      background: var(--secondary-background-color);
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .econ-period-tabs button.active {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+      font-weight: 600;
+    }
+    .econ-hero-line {
+      font-size: 1.15rem;
+      margin: 12px 0;
     }
   `,
     overviewSectionStyles,
@@ -521,7 +753,11 @@ export class HaSmappeeOverviewPanel extends LitElement {
       this._store.setState({ connection: "loading", panelError: null });
     }
     try {
-      const panel = await fetchPanelData(this.hass, selectedEntryId);
+      const panel = await fetchPanelData(
+        this.hass,
+        selectedEntryId,
+        this._store.getState().advancedMode
+      );
       this._store.setState({
         panel,
         connection: "connected",
@@ -585,6 +821,8 @@ export class HaSmappeeOverviewPanel extends LitElement {
             onOpenDiagnostics: () =>
               this._store.setState({ activeTab: "diagnostics" }),
           });
+        case "devices":
+          return renderDevicesTab(panel);
         case "chargers":
           return renderChargersTab(panel, hass, id, () => void this._loadPanel(false));
         case "sessions":
@@ -592,6 +830,14 @@ export class HaSmappeeOverviewPanel extends LitElement {
             panel,
             st.sessionsFilters,
             st.sessionsSort,
+            {
+              groupByDay: st.sessionsGroupByDay,
+              expandedRowId: st.sessionsExpandedRowId,
+              onToggleGroupByDay: (v) =>
+                this._store.setState({ sessionsGroupByDay: v }),
+              onToggleExpand: (rowId) =>
+                this._store.setState({ sessionsExpandedRowId: rowId }),
+            },
             (f) =>
               this._store.setState({
                 sessionsFilters: { ...st.sessionsFilters, ...f },
@@ -610,7 +856,11 @@ export class HaSmappeeOverviewPanel extends LitElement {
             }
           );
         case "economics":
-          return renderEconomicsTab(panel);
+          return renderEconomicsTab(
+            panel,
+            st.economicsPeriod,
+            (per) => this._store.setState({ economicsPeriod: per })
+          );
         case "diagnostics":
           return renderDiagnosticsTab(panel);
         default:
@@ -697,6 +947,18 @@ export class HaSmappeeOverviewPanel extends LitElement {
             ${alerts > 0
               ? html`<span class="badge-alerts" title="Alerts">${alerts}</span>`
               : ""}
+            <label class="adv-toggle">
+              <input
+                type="checkbox"
+                .checked=${st.advancedMode}
+                @change=${(e: Event) => {
+                  const on = (e.target as HTMLInputElement).checked;
+                  this._store.persistAdvancedMode(on);
+                  void this._loadPanel(true);
+                }}
+              />
+              Advanced mode
+            </label>
           </div>
         </header>
         ${st.panelError && st.connection === "error"
@@ -735,7 +997,8 @@ export class HaSmappeeOverviewPanel extends LitElement {
         ${st.connection === "loading" && !panel
           ? renderPageSkeleton()
           : panel
-            ? this._renderTab(panel)
+            ? html`${this._renderTab(panel)}
+                ${st.advancedMode ? renderAdvancedPanel(panel) : nothing}`
             : html`<p class="muted">No data</p>`}
       </div>
     `;

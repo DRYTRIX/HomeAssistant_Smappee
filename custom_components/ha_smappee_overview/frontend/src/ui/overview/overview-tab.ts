@@ -1,15 +1,21 @@
 import { html, type TemplateResult } from "lit";
 import type { HistoryPoint } from "../../api/ws.js";
+import { buildMergedAssistantSuggestions } from "../../logic/assistantSuggestions.js";
 import { buildOverviewInsights } from "../../logic/overviewInsights.js";
 import type { HomeAssistant } from "../../types/hass.js";
 import type { ConnectionState, PanelPayload } from "../../types/panel.js";
 import { collectAnomalies, renderAnomalyBadges } from "./anomalies.js";
-import { renderChargerQuick } from "./charger-quick.js";
-import { renderEconomicsHero } from "./economics-hero.js";
-import { renderFlowKpis } from "./flow-kpis.js";
+import { renderChargerOverviewCards } from "./charger-overview-card.js";
+import { renderEconomicsCompact } from "./economics-compact.js";
 import { renderHealthStrip } from "./health-strip.js";
-import { renderInsightCards } from "./insight-cards.js";
+import {
+  renderAssistantCards,
+  renderOperationalInsightCards,
+} from "./insight-cards.js";
 import { renderEmptyState } from "./empty-state.js";
+import { renderKpiCards } from "./kpi-cards.js";
+import { renderSmartFlow } from "./smart-flow.js";
+import { renderStatusBadges } from "./status-badges.js";
 
 export interface OverviewTabOptions {
   connection: ConnectionState;
@@ -32,7 +38,12 @@ export function renderOverviewTab(
     entityMap && Object.keys(entityMap).length > 0
   );
   const anomalies = collectAnomalies(p);
-  const insights = buildOverviewInsights(p);
+  const assistantCards = buildMergedAssistantSuggestions(
+    p,
+    history,
+    entityMap
+  );
+  const operationalInsights = buildOverviewInsights(p);
   const thin = opt.narrow;
 
   return html`
@@ -48,6 +59,7 @@ export function renderOverviewTab(
         <h2 class="sov-visually-hidden">Installation health</h2>
         ${renderAnomalyBadges(anomalies)}
       </section>
+      ${renderStatusBadges(p)}
       ${!p.consumption && !p.chargers?.length
         ? renderEmptyState(
             "Waiting for data",
@@ -56,10 +68,24 @@ export function renderOverviewTab(
             opt.onOpenDiagnostics
           )
         : html`
-            ${renderFlowKpis(p, history, entityMap, opt.historyLoading)}
-            ${renderInsightCards(insights)}
-            ${renderEconomicsHero(p)}
-            ${renderChargerQuick(
+            <div class="sov-overview-main-grid">
+              <div class="sov-overview-flow-col">
+                ${renderSmartFlow(p)}
+              </div>
+              <div class="sov-overview-kpi-col">
+                ${renderKpiCards(
+                  p,
+                  history,
+                  entityMap,
+                  opt.historyLoading,
+                  thin
+                )}
+              </div>
+            </div>
+            ${renderOperationalInsightCards(operationalInsights)}
+            ${renderAssistantCards(assistantCards)}
+            ${renderEconomicsCompact(p)}
+            ${renderChargerOverviewCards(
               p,
               opt.hass,
               opt.entryId,

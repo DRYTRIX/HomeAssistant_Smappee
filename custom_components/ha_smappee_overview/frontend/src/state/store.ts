@@ -6,6 +6,7 @@ import type {
 } from "../types/panel.js";
 
 const STORAGE_KEY = "smappee_panel_entry";
+const STORAGE_ADVANCED = "smappee_panel_advanced";
 
 export interface SessionsFilters {
   chargerSerial?: string;
@@ -28,6 +29,11 @@ export interface SmappeeStoreState {
   lastFetchAt: number | null;
   sessionsSort: { column: string; dir: "asc" | "desc" };
   sessionsFilters: SessionsFilters;
+  sessionsExpandedRowId: string | null;
+  sessionsGroupByDay: boolean;
+  economicsPeriod: "today" | "month" | "year";
+  /** UI-only: request include_advanced on panel WS when integration allows */
+  advancedMode: boolean;
 }
 
 export type Listener = () => void;
@@ -38,11 +44,19 @@ export function createSmappeeStore(defaultEntryId: string): {
   setState: (patch: Partial<SmappeeStoreState>) => void;
   loadStoredEntry: () => string;
   persistEntry: (id: string) => void;
+  persistAdvancedMode: (on: boolean) => void;
 } {
   let stored = defaultEntryId;
   try {
     const s = sessionStorage.getItem(STORAGE_KEY);
     if (s) stored = s;
+  } catch {
+    /* ignore */
+  }
+
+  let advStored = false;
+  try {
+    advStored = sessionStorage.getItem(STORAGE_ADVANCED) === "1";
   } catch {
     /* ignore */
   }
@@ -60,6 +74,10 @@ export function createSmappeeStore(defaultEntryId: string): {
     lastFetchAt: null,
     sessionsSort: { column: "start", dir: "desc" },
     sessionsFilters: {},
+    sessionsExpandedRowId: null,
+    sessionsGroupByDay: false,
+    economicsPeriod: "today",
+    advancedMode: advStored,
   };
 
   const listeners = new Set<Listener>();
@@ -82,6 +100,16 @@ export function createSmappeeStore(defaultEntryId: string): {
         /* ignore */
       }
       stored = id;
+    },
+    persistAdvancedMode: (on) => {
+      try {
+        if (on) sessionStorage.setItem(STORAGE_ADVANCED, "1");
+        else sessionStorage.removeItem(STORAGE_ADVANCED);
+      } catch {
+        /* ignore */
+      }
+      state = { ...state, advancedMode: on };
+      listeners.forEach((l) => l());
     },
   };
 }

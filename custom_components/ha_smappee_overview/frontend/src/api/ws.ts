@@ -27,15 +27,59 @@ export async function listEntries(hass: HomeAssistant): Promise<ConfigEntryInfo[
   return res.entries ?? [];
 }
 
+/** Validate WebSocket result; default missing arrays so the UI never assumes shape. */
+export function normalizePanelPayload(raw: unknown): PanelPayload {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("Panel payload is not an object");
+  }
+  const o = raw as Record<string, unknown>;
+  if (!Array.isArray(o.chargers)) {
+    throw new Error("Panel payload missing chargers array");
+  }
+  if (!Array.isArray(o.sessions_active)) {
+    o.sessions_active = [];
+  }
+  if (!Array.isArray(o.sessions_recent)) {
+    o.sessions_recent = [];
+  }
+  if (!Array.isArray(o.tariffs)) {
+    o.tariffs = [];
+  }
+  if (!o.discovery || typeof o.discovery !== "object") {
+    o.discovery = {
+      partial: true,
+      notes: [],
+      sources: {},
+      generated_at: null,
+      edges: [],
+      nodes: [],
+      summary: { ok: 0, offline: 0, stale: 0, unknown: 0 },
+      consumption_stale_hint: false,
+    };
+  }
+  const disc = o.discovery as Record<string, unknown>;
+  if (!Array.isArray(disc.nodes)) disc.nodes = [];
+  if (!Array.isArray(disc.edges)) disc.edges = [];
+  if (!disc.summary || typeof disc.summary !== "object") {
+    disc.summary = { ok: 0, offline: 0, stale: 0, unknown: 0 };
+  }
+  return o as unknown as PanelPayload;
+}
+
 export async function fetchPanelData(
   hass: HomeAssistant,
-  configEntryId: string
+  configEntryId: string,
+  includeAdvanced = false
 ): Promise<PanelPayload> {
-  const res = (await hass.connection.sendMessagePromise({
+  const msg: Record<string, unknown> = {
     type: WS_PANEL,
     config_entry_id: configEntryId,
-  })) as PanelPayload;
-  return res;
+  };
+  if (includeAdvanced) {
+    msg.include_advanced = true;
+  }
+  const res = await callWs(hass, msg);
+  return normalizePanelPayload(res);
 }
 
 export interface HistoryPoint {

@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CHARGING_MODE_NORMAL, DOMAIN
+from .const import CHARGING_MODE_NORMAL, DATA_COORDINATOR, DOMAIN
 from .coordinator import SmappeeOverviewCoordinator
 from .entity import charger_device_info
 
@@ -106,8 +106,7 @@ class SmappeeConnectorCurrentNumber(CoordinatorEntity, NumberEntity):
         return None
 
     async def async_set_native_value(self, value: float) -> None:
-        client = self.hass.data[DOMAIN][self.coordinator.config_entry.entry_id]["client"]
-        await client.set_connector_mode(
+        await self.coordinator.async_set_connector_mode(
             self._charger_serial,
             self._connector_position,
             CHARGING_MODE_NORMAL,

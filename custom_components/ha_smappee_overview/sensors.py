@@ -13,9 +13,10 @@ from datetime import UTC, datetime
 from homeassistant.const import PERCENTAGE, UnitOfElectricPotential, UnitOfEnergy, UnitOfPower
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DATA_COORDINATOR, DOMAIN
 from .coordinator import SmappeeOverviewCoordinator
 from .entity import SmappeeEntity
 
@@ -27,7 +28,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up sensors."""
     coordinator: SmappeeOverviewCoordinator = hass.data[DOMAIN][config_entry.entry_id][
-        "coordinator"
+        DATA_COORDINATOR
     ]
     entities: list[SmappeeSensor] = []
     for desc in SENSOR_TYPES:
@@ -94,6 +95,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         key="last_update",
         translation_key="last_successful_sync",
         device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SensorEntityDescription(
         key="battery_soc",
@@ -135,15 +137,18 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="tariff_primary",
         translation_key="tariff_primary",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SensorEntityDescription(
         key="submeter_count",
         translation_key="submeter_count",
         state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SensorEntityDescription(
         key="reimbursement_pending",
         translation_key="reimbursement_pending",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 
@@ -175,6 +180,8 @@ class SmappeeSensor(SmappeeEntity, SensorEntity):
         if key == "battery_soc":
             c = self.coordinator.data.consumption
             return bool(c and c.battery_soc_pct is not None)
+        if key == "submeter_count":
+            return self.coordinator.data.consumption is not None
         return super().available
 
     @property
@@ -206,7 +213,7 @@ class SmappeeSensor(SmappeeEntity, SensorEntity):
             t = self.coordinator.data.tariffs
             return t[0].name or t[0].id if t else None
         if key == "submeter_count":
-            return len(c.submeters) if c else 0
+            return len(c.submeters) if c else None
         if key == "reimbursement_pending":
             m = self.coordinator.data.reimbursement_monthly
             if m is None:

@@ -15,6 +15,7 @@ PANEL_SENSOR_KEYS: tuple[str, ...] = (
     "solar",
     "consumption",
     "battery_flow",
+    "self_consumption",
 )
 
 

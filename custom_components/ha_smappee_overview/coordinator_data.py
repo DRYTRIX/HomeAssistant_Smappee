@@ -10,6 +10,7 @@ from .models import (
     ChargingSession,
     ChargerFeatures,
     ConsumptionSummary,
+    DiscoverySnapshot,
     EVCharger,
     Installation,
     InstallationFeatures,
@@ -39,3 +40,5 @@ class SmappeeCoordinatorData:
     last_successful_update: datetime | None = None
     last_error: str | None = None
     api_partial: bool = False
+    discovery: DiscoverySnapshot = field(default_factory=DiscoverySnapshot)
+    discovery_last_observed: dict[str, datetime] = field(default_factory=dict)

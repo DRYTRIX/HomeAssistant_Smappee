@@ -18,12 +18,22 @@ from .api import SmappeeDomainAPI
 from .api.client import SmappeeAPIClient
 from .const import (
     CONF_ACCESS_TOKEN,
+    CONF_ASSISTANT_ASSUMED_SESSION_KWH,
+    CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH,
+    CONF_BE_CAPACITY_CONTRACT_KW,
+    CONF_BE_CAPACITY_EUR_PER_KW_YEAR,
+    CONF_BE_CAPACITY_WARN_PCT,
     CONF_CHARGING_PARK_ID_OVERRIDE,
     CONF_CLIENT_ID,
     CONF_CLIENT_SECRET,
     CONF_COUNTRY_CODE,
+    CONF_ADVANCED_PANEL,
     CONF_DEBUG_SESSION_JSON_KEYS,
+    CONF_EI_CHARGE_PHASES,
+    CONF_EI_ENABLE_CAPACITY_TRACKING,
+    CONF_EI_LINE_VOLTAGE,
     CONF_MAX_SESSION_CHARGERS,
+    CONF_PEAK_PHASE_CURRENT_WARNING_A,
     CONF_REFRESH_TOKEN,
     CONF_SERVICE_LOCATION_ID,
     CONF_SERVICE_LOCATION_NAME,
@@ -31,6 +41,10 @@ from .const import (
     CONF_TOKEN_EXPIRES_AT,
     CONF_USERNAME,
     CONF_UPDATE_INTERVAL,
+    DEFAULT_ASSISTANT_ASSUMED_SESSION_KWH,
+    DEFAULT_BE_CAPACITY_WARN_PCT,
+    DEFAULT_EI_CHARGE_PHASES,
+    DEFAULT_EI_LINE_VOLTAGE,
     DEFAULT_SESSION_HISTORY_DAYS,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
@@ -245,12 +259,59 @@ class SmappeeOverviewConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_DEBUG_SESSION_JSON_KEYS: user_input.get(
                     CONF_DEBUG_SESSION_JSON_KEYS, False
                 ),
+                CONF_ADVANCED_PANEL: user_input.get(CONF_ADVANCED_PANEL, False),
                 "reimbursement_rate_per_kwh": float(
                     user_input.get("reimbursement_rate_per_kwh", 0) or 0
                 ),
                 "reimbursement_currency": user_input.get("reimbursement_currency", "EUR"),
                 "belgium_cap_eur_per_kwh": user_input.get("belgium_cap_eur_per_kwh"),
                 CONF_COUNTRY_CODE: (user_input.get(CONF_COUNTRY_CODE) or "") or None,
+                CONF_PEAK_PHASE_CURRENT_WARNING_A: user_input.get(
+                    CONF_PEAK_PHASE_CURRENT_WARNING_A
+                ),
+                CONF_EI_LINE_VOLTAGE: float(
+                    user_input.get(
+                        CONF_EI_LINE_VOLTAGE,
+                        entry.options.get(CONF_EI_LINE_VOLTAGE, DEFAULT_EI_LINE_VOLTAGE),
+                    )
+                ),
+                CONF_EI_CHARGE_PHASES: int(
+                    user_input.get(
+                        CONF_EI_CHARGE_PHASES,
+                        entry.options.get(
+                            CONF_EI_CHARGE_PHASES, DEFAULT_EI_CHARGE_PHASES
+                        ),
+                    )
+                ),
+                CONF_EI_ENABLE_CAPACITY_TRACKING: user_input.get(
+                    CONF_EI_ENABLE_CAPACITY_TRACKING, False
+                ),
+                CONF_BE_CAPACITY_CONTRACT_KW: user_input.get(
+                    CONF_BE_CAPACITY_CONTRACT_KW
+                ),
+                CONF_BE_CAPACITY_WARN_PCT: float(
+                    user_input.get(
+                        CONF_BE_CAPACITY_WARN_PCT,
+                        entry.options.get(
+                            CONF_BE_CAPACITY_WARN_PCT, DEFAULT_BE_CAPACITY_WARN_PCT
+                        ),
+                    )
+                ),
+                CONF_BE_CAPACITY_EUR_PER_KW_YEAR: user_input.get(
+                    CONF_BE_CAPACITY_EUR_PER_KW_YEAR
+                ),
+                CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH: user_input.get(
+                    CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH
+                ),
+                CONF_ASSISTANT_ASSUMED_SESSION_KWH: float(
+                    user_input.get(
+                        CONF_ASSISTANT_ASSUMED_SESSION_KWH,
+                        entry.options.get(
+                            CONF_ASSISTANT_ASSUMED_SESSION_KWH,
+                            DEFAULT_ASSISTANT_ASSUMED_SESSION_KWH,
+                        ),
+                    )
+                ),
             }
             data_updates: dict[str, Any] = {}
             pwd = user_input.get("password")
@@ -312,6 +373,10 @@ class SmappeeOverviewConfigFlow(ConfigFlow, domain=DOMAIN):
                         default=entry.options.get(CONF_DEBUG_SESSION_JSON_KEYS, False),
                     ): cv.boolean,
                     vol.Optional(
+                        CONF_ADVANCED_PANEL,
+                        default=entry.options.get(CONF_ADVANCED_PANEL, False),
+                    ): cv.boolean,
+                    vol.Optional(
                         "reimbursement_rate_per_kwh",
                         default=entry.options.get("reimbursement_rate_per_kwh", 0),
                     ): vol.Coerce(float),
@@ -327,6 +392,61 @@ class SmappeeOverviewConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_COUNTRY_CODE,
                         default=entry.options.get(CONF_COUNTRY_CODE) or "",
                     ): vol.In(["", "BE", "NL", "DE", "FR", "OTHER"]),
+                    vol.Optional(
+                        CONF_PEAK_PHASE_CURRENT_WARNING_A,
+                        default=entry.options.get(CONF_PEAK_PHASE_CURRENT_WARNING_A),
+                    ): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=1, max=200))),
+                    vol.Optional(
+                        CONF_EI_LINE_VOLTAGE,
+                        default=float(
+                            entry.options.get(CONF_EI_LINE_VOLTAGE, DEFAULT_EI_LINE_VOLTAGE)
+                        ),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=100, max=500)),
+                    vol.Optional(
+                        CONF_EI_CHARGE_PHASES,
+                        default=int(
+                            entry.options.get(
+                                CONF_EI_CHARGE_PHASES, DEFAULT_EI_CHARGE_PHASES
+                            )
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.In([1, 3])),
+                    vol.Optional(
+                        CONF_EI_ENABLE_CAPACITY_TRACKING,
+                        default=entry.options.get(
+                            CONF_EI_ENABLE_CAPACITY_TRACKING, False
+                        ),
+                    ): cv.boolean,
+                    vol.Optional(
+                        CONF_BE_CAPACITY_CONTRACT_KW,
+                        default=entry.options.get(CONF_BE_CAPACITY_CONTRACT_KW),
+                    ): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.5, max=500))),
+                    vol.Optional(
+                        CONF_BE_CAPACITY_WARN_PCT,
+                        default=float(
+                            entry.options.get(
+                                CONF_BE_CAPACITY_WARN_PCT, DEFAULT_BE_CAPACITY_WARN_PCT
+                            )
+                        ),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=1, max=100)),
+                    vol.Optional(
+                        CONF_BE_CAPACITY_EUR_PER_KW_YEAR,
+                        default=entry.options.get(CONF_BE_CAPACITY_EUR_PER_KW_YEAR),
+                    ): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=10000))),
+                    vol.Optional(
+                        CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH,
+                        default=entry.options.get(
+                            CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH
+                        ),
+                    ): vol.Any(None, vol.Coerce(float)),
+                    vol.Optional(
+                        CONF_ASSISTANT_ASSUMED_SESSION_KWH,
+                        default=float(
+                            entry.options.get(
+                                CONF_ASSISTANT_ASSUMED_SESSION_KWH,
+                                DEFAULT_ASSISTANT_ASSUMED_SESSION_KWH,
+                            )
+                        ),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=1, max=200)),
                     vol.Optional("password"): str,
                 }
             ),
@@ -382,6 +502,10 @@ class SmappeeOverviewOptionsFlow(OptionsFlow):
                         default=entry.options.get(CONF_DEBUG_SESSION_JSON_KEYS, False),
                     ): cv.boolean,
                     vol.Optional(
+                        CONF_ADVANCED_PANEL,
+                        default=entry.options.get(CONF_ADVANCED_PANEL, False),
+                    ): cv.boolean,
+                    vol.Optional(
                         "reimbursement_rate_per_kwh",
                         default=entry.options.get("reimbursement_rate_per_kwh", 0),
                     ): vol.Coerce(float),
@@ -397,6 +521,59 @@ class SmappeeOverviewOptionsFlow(OptionsFlow):
                         CONF_COUNTRY_CODE,
                         default=entry.options.get(CONF_COUNTRY_CODE) or "",
                     ): vol.In(["", "BE", "NL", "DE", "FR", "OTHER"]),
+                    vol.Optional(
+                        CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH,
+                        default=entry.options.get(
+                            CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH
+                        ),
+                    ): vol.Any(None, vol.Coerce(float)),
+                    vol.Optional(
+                        CONF_ASSISTANT_ASSUMED_SESSION_KWH,
+                        default=entry.options.get(
+                            CONF_ASSISTANT_ASSUMED_SESSION_KWH,
+                            DEFAULT_ASSISTANT_ASSUMED_SESSION_KWH,
+                        ),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=1, max=200)),
+                    vol.Optional(
+                        CONF_PEAK_PHASE_CURRENT_WARNING_A,
+                        default=entry.options.get(CONF_PEAK_PHASE_CURRENT_WARNING_A),
+                    ): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=1, max=200))),
+                    vol.Optional(
+                        CONF_EI_LINE_VOLTAGE,
+                        default=float(
+                            entry.options.get(CONF_EI_LINE_VOLTAGE, DEFAULT_EI_LINE_VOLTAGE)
+                        ),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=100, max=500)),
+                    vol.Optional(
+                        CONF_EI_CHARGE_PHASES,
+                        default=int(
+                            entry.options.get(
+                                CONF_EI_CHARGE_PHASES, DEFAULT_EI_CHARGE_PHASES
+                            )
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.In([1, 3])),
+                    vol.Optional(
+                        CONF_EI_ENABLE_CAPACITY_TRACKING,
+                        default=entry.options.get(
+                            CONF_EI_ENABLE_CAPACITY_TRACKING, False
+                        ),
+                    ): cv.boolean,
+                    vol.Optional(
+                        CONF_BE_CAPACITY_CONTRACT_KW,
+                        default=entry.options.get(CONF_BE_CAPACITY_CONTRACT_KW),
+                    ): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.5, max=500))),
+                    vol.Optional(
+                        CONF_BE_CAPACITY_WARN_PCT,
+                        default=float(
+                            entry.options.get(
+                                CONF_BE_CAPACITY_WARN_PCT, DEFAULT_BE_CAPACITY_WARN_PCT
+                            )
+                        ),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=1, max=100)),
+                    vol.Optional(
+                        CONF_BE_CAPACITY_EUR_PER_KW_YEAR,
+                        default=entry.options.get(CONF_BE_CAPACITY_EUR_PER_KW_YEAR),
+                    ): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=10000))),
                 }
             ),
         )

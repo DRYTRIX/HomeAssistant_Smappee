@@ -1,7 +1,9 @@
 import { html, type TemplateResult } from "lit";
+import { explanationForConnector } from "../logic/chargingExplanation.js";
 import { selectChargerLoadBalance } from "../state/selectors.js";
 import type { HomeAssistant } from "../types/hass.js";
 import type { PanelPayload, PanelSessionEnriched } from "../types/panel.js";
+import { renderChargingExplanationBlock } from "./charging-explanation-ui.js";
 
 const DOMAIN = "ha_smappee_overview";
 
@@ -61,14 +63,18 @@ export function renderChargersTab(
               const sess = activeCharging.find(
                 (s) => s.charger_serial === ch.serial && s.connector === co.position
               );
+              const expl = explanationForConnector(p, ch.serial, co.position);
               return html`
                 <div class="connector-block">
-                  <div class="conn-title">
-                    Connector ${co.position} · mode
-                    <strong>${co.mode}</strong>
-                    · ${co.current_a ?? "—"} A
-                    ${co.session_active ? html`<span class="live">Live</span>` : ""}
+                  <div class="conn-title conn-title-row">
+                    <span>
+                      Connector ${co.position} · mode
+                      <strong>${co.mode}</strong>
+                      · ${co.current_a ?? "—"} A
+                      ${co.session_active ? html`<span class="live">Live</span>` : ""}
+                    </span>
                   </div>
+                  ${renderChargingExplanationBlock(expl)}
                   ${sess
                     ? html`
                         <div class="session-mini card-inner">
@@ -136,27 +142,38 @@ export function renderChargersTab(
                       `
                     : ""}
                   ${feat?.supports_current_limit
-                    ? html`
-                        <div class="mode-row">
-                          <label>Current (A)</label>
-                          <input
-                            type="number"
-                            min="6"
-                            max=${feat.max_current_a ?? 32}
-                            .value=${String(co.current_a ?? 16)}
-                            @change=${(ev: Event) => {
-                              const inp = ev.target as HTMLInputElement;
-                              const v = parseInt(inp.value, 10);
-                              if (v >= 6)
-                                void svc("set_charging_current", {
-                                  charger_serial: ch.serial,
-                                  connector_position: co.position,
-                                  current_a: v,
-                                });
-                            }}
-                          />
-                        </div>
-                      `
+                    ? (() => {
+                        const maxA = Math.min(32, feat.max_current_a ?? 32);
+                        const minA = 6;
+                        const curVal = Math.round(
+                          Math.min(
+                            maxA,
+                            Math.max(minA, co.current_a ?? 16)
+                          )
+                        );
+                        return html`
+                          <div class="sov-current-slider-row">
+                            <label class="sov-slider-label">Current (A)</label>
+                            <input
+                              type="range"
+                              min=${minA}
+                              max=${maxA}
+                              .value=${String(curVal)}
+                              @change=${(ev: Event) => {
+                                const inp = ev.target as HTMLInputElement;
+                                const v = parseInt(inp.value, 10);
+                                if (v >= minA)
+                                  void svc("set_charging_current", {
+                                    charger_serial: ch.serial,
+                                    connector_position: co.position,
+                                    current_a: v,
+                                  });
+                              }}
+                            />
+                            <span class="mono small">${curVal} A</span>
+                          </div>
+                        `;
+                      })()
                     : ""}
                 </div>
               `;

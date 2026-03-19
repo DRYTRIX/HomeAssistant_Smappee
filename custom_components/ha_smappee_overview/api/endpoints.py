@@ -30,7 +30,15 @@ def servicelocations_url(extended: bool = True) -> str:
 def parse_installations(payload: list[dict[str, Any]] | dict[str, Any]) -> list[Installation]:
     """Parse servicelocation list response."""
     if isinstance(payload, dict):
-        items = payload.get("serviceLocations") or payload.get("serviceLocations") or []
+        items = payload.get("serviceLocations")
+        if items is None:
+            sl_alt = payload.get("serviceLocation")
+            if isinstance(sl_alt, list):
+                items = sl_alt
+            elif isinstance(sl_alt, dict):
+                items = [sl_alt]
+            else:
+                items = []
         if not items and "id" in payload:
             items = [payload]
     else:

@@ -32,6 +32,27 @@ def test_parse_installations_empty() -> None:
     assert parse_installations([]) == []
 
 
+def test_parse_installations_dict_service_location_singular() -> None:
+    """API may return a single serviceLocation object."""
+    raw = {"serviceLocation": {"serviceLocationId": 7, "name": "Garage"}}
+    locs = parse_installations(raw)
+    assert len(locs) == 1
+    assert locs[0].id == 7
+    assert locs[0].name == "Garage"
+
+
+def test_parse_installations_dict_service_location_list() -> None:
+    raw = {
+        "serviceLocation": [
+            {"serviceLocationId": 1, "name": "A"},
+            {"serviceLocationId": 2, "name": "B"},
+        ]
+    }
+    locs = parse_installations(raw)
+    assert len(locs) == 2
+    assert {x.id for x in locs} == {1, 2}
+
+
 def test_parse_consumption_summary_grid_solar() -> None:
     raw = {
         "gridImport": 100,

@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DATA_COORDINATOR, DOMAIN
 from .coordinator import SmappeeOverviewCoordinator
 from .entity import SmappeeEntity
 
@@ -23,7 +23,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up binary sensors."""
     coordinator: SmappeeOverviewCoordinator = hass.data[DOMAIN][config_entry.entry_id][
-        "coordinator"
+        DATA_COORDINATOR
     ]
     async_add_entities(
         [

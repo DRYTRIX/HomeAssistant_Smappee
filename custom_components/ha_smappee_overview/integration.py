@@ -19,11 +19,13 @@ from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers import config_validation as cv
 from homeassistant.components import websocket_api
 
-from .api.client import SmappeeAPIClient
+from .api.client import SmappeeAPIClient, SmappeeApiError
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_CLIENT_ID,
     CONF_CLIENT_SECRET,
+    CONF_COUNTRY_CODE,
+    CONF_EI_ENABLE_CAPACITY_TRACKING,
     CONF_REFRESH_TOKEN,
     CONF_SERVICE_LOCATION_ID,
     CONF_TOKEN_EXPIRES_AT,
@@ -35,10 +37,15 @@ from .const import (
     WS_TYPE_PANEL_DATA,
 )
 from .coordinator import SmappeeOverviewCoordinator
+from .panel_entity_map import build_entity_map
 from .panel_payload import build_full_panel_payload
+from .recorder_peak import async_sample_monthly_max_grid_import_kw
 from .services import async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
+
+# WebSocket commands and static files use global hass.data flags so they register once
+# while multiple config entries stay loaded (see _register_websocket, static path).
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -78,7 +85,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_config_entry_first_refresh()
     except ConfigEntryAuthFailed:
         raise
-    except (aiohttp.ClientError, TimeoutError) as err:
+    except (aiohttp.ClientError, TimeoutError, SmappeeApiError) as err:
         raise ConfigEntryNotReady(f"Cannot reach Smappee API: {err}") from err
 
     hass.data[DOMAIN][entry.entry_id] = {
@@ -170,6 +177,7 @@ def _register_websocket(hass: HomeAssistant) -> None:
         {
             vol.Required("type"): WS_TYPE_PANEL_DATA,
             vol.Required("config_entry_id"): cv.string,
+            vol.Optional("include_advanced"): cv.boolean,
         }
     )
     @websocket_api.async_response
@@ -196,8 +204,30 @@ def _register_websocket(hass: HomeAssistant) -> None:
             )
             return
         coord: SmappeeOverviewCoordinator = domain_entry[DATA_COORDINATOR]
+        entry = coord.config_entry
+        opt = entry.options
+        country = str(opt.get(CONF_COUNTRY_CODE) or "").strip().upper()
+        peak_sample: dict[str, Any] | None = None
+        if country == "BE" and opt.get(CONF_EI_ENABLE_CAPACITY_TRACKING):
+            em = build_entity_map(hass, entry)
+            gid = em.get("grid_import")
+            if gid:
+                peak_sample = await async_sample_monthly_max_grid_import_kw(hass, gid)
+            else:
+                peak_sample = {
+                    "peak_kw_sampled": None,
+                    "sample_count": 0,
+                    "method": "monthly_max_of_ha_states",
+                    "unavailable_reason": "grid_import_entity_missing",
+                }
         connection.send_result(
-            msg["id"], build_full_panel_payload(hass, coord)
+            msg["id"],
+            build_full_panel_payload(
+                hass,
+                coord,
+                intelligence_peak_sample=peak_sample,
+                include_advanced_requested=bool(msg.get("include_advanced")),
+            ),
         )
 
     @websocket_api.websocket_command({vol.Required("type"): WS_TYPE_LIST_ENTRIES})

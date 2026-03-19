@@ -35,10 +35,19 @@
           "max_session_chargers": "Max chargers for session poll (1–20)",
           "charging_park_id_override": "Charging park ID override (optional)",
           "debug_session_json_keys": "Debug session JSON keys (log + diagnostics)",
+          "advanced_panel": "Allow advanced panel data (raw excerpts, coordinator state)",
           "reimbursement_rate_per_kwh": "Reimbursement rate per kWh",
           "reimbursement_currency": "Currency",
           "belgium_cap_eur_per_kwh": "Belgium reimbursement cap (EUR/kWh, optional)",
           "country_code": "Country (BE enables cap validation in panel)",
+          "ei_line_voltage": "Energy intel: line voltage (V) for EV power estimate",
+          "ei_charge_phases": "Energy intel: AC phases for EV power (1 or 3)",
+          "ei_enable_capacity_tracking": "Belgium: sample grid peak from recorder",
+          "be_capacity_contract_kw": "Belgium: contracted capacity (kW)",
+          "be_capacity_warn_pct": "Belgium: warn when peak exceeds this % of contract",
+          "be_capacity_eur_per_kw_year": "Belgium: illustrative €/kW/year for annual line",
+          "assistant_off_peak_price_per_kwh": "Assistant: off-peak price per kWh (optional, for savings estimate)",
+          "assistant_assumed_session_kwh": "Assistant: assumed session size (kWh) for savings estimate",
           "password": "Password (optional, refreshes API token)"
         }
       }
@@ -62,10 +71,19 @@
           "max_session_chargers": "Max chargers for session poll (1–20)",
           "charging_park_id_override": "Charging park ID override (optional)",
           "debug_session_json_keys": "Debug session JSON keys (log + diagnostics)",
+          "advanced_panel": "Allow advanced panel data (raw excerpts, coordinator state)",
           "reimbursement_rate_per_kwh": "Reimbursement rate per kWh",
           "reimbursement_currency": "Currency",
           "belgium_cap_eur_per_kwh": "Belgium cap EUR/kWh (optional)",
-          "country_code": "Country code (BE = cap badge in panel)"
+          "country_code": "Country code (BE = cap badge in panel)",
+          "ei_line_voltage": "Energy intel: line voltage (V)",
+          "ei_charge_phases": "Energy intel: AC phases (1 or 3)",
+          "ei_enable_capacity_tracking": "Belgium: sample grid peak from recorder",
+          "be_capacity_contract_kw": "Belgium: contracted capacity (kW)",
+          "be_capacity_warn_pct": "Belgium: warn threshold (% of contract)",
+          "be_capacity_eur_per_kw_year": "Belgium: illustrative €/kW/year",
+          "assistant_off_peak_price_per_kwh": "Assistant: off-peak €/kWh (optional)",
+          "assistant_assumed_session_kwh": "Assistant: assumed kWh for savings estimate"
         }
       }
     }

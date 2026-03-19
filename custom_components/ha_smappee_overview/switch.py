@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DATA_COORDINATOR, DOMAIN
 from .coordinator import SmappeeOverviewCoordinator
 from .entity import charger_device_info
 
@@ -23,7 +23,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: SmappeeOverviewCoordinator = hass.data[DOMAIN][config_entry.entry_id][
-        "coordinator"
+        DATA_COORDINATOR
     ]
     added: set[str] = set()
 
@@ -79,16 +79,21 @@ class SmappeeChargerAvailabilitySwitch(CoordinatorEntity, SwitchEntity):
         return ch.availability
 
     async def async_turn_on(self) -> None:
-        client = self.hass.data[DOMAIN][self.coordinator.config_entry.entry_id]["client"]
-        ok = await client.set_charger_availability(self._charger_serial, True)
+        ok = await self.coordinator.async_set_charger_availability(
+            self._charger_serial, True
+        )
         if not ok:
-            self.coordinator.mark_charger_availability_api_unsupported(self._charger_serial)
-            _LOGGER.warning("Charger availability API not supported for %s", self._charger_serial)
+            _LOGGER.warning(
+                "Charger availability API not supported for %s", self._charger_serial
+            )
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self) -> None:
-        client = self.hass.data[DOMAIN][self.coordinator.config_entry.entry_id]["client"]
-        ok = await client.set_charger_availability(self._charger_serial, False)
+        ok = await self.coordinator.async_set_charger_availability(
+            self._charger_serial, False
+        )
         if not ok:
-            self.coordinator.mark_charger_availability_api_unsupported(self._charger_serial)
+            _LOGGER.warning(
+                "Charger availability API not supported for %s", self._charger_serial
+            )
         await self.coordinator.async_request_refresh()

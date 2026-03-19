@@ -1,4 +1,5 @@
 import { html, type TemplateResult } from "lit";
+import { chargingReasonFromHint } from "../../logic/overviewDerived.js";
 import type { HomeAssistant } from "../../types/hass.js";
 import type { PanelPayload } from "../../types/panel.js";
 
@@ -22,7 +23,7 @@ function sourceLabel(s: string): string {
   return "Est.";
 }
 
-export function renderChargerQuick(
+export function renderChargerOverviewCards(
   p: PanelPayload,
   hass: HomeAssistant,
   entryId: string,
@@ -58,7 +59,7 @@ export function renderChargerQuick(
   return html`
     <div class="sov-charger-section">
       <div class="sov-charger-head">
-        <h2 class="sov-h2">EV quick controls</h2>
+        <h2 class="sov-h2">Charger control</h2>
         <button
           type="button"
           class="btn secondary sov-link-chargers"
@@ -70,6 +71,8 @@ export function renderChargerQuick(
       <div class="sov-charger-grid">
         ${p.chargers.map((ch) => {
           const feat = p.charger_features?.[ch.serial];
+          const anySess = ch.connectors.some((c) => c.session_active);
+          const estW = p.overview_context?.estimated_ev_power_w;
           return html`
             <div class="card sov-charger-card">
               <div class="sov-charger-title-row">
@@ -79,8 +82,19 @@ export function renderChargerQuick(
                 >
               </div>
               <div class="muted mono small">${ch.serial}</div>
+              ${anySess && estW != null && estW > 0
+                ? html`<p class="muted small">
+                    Site EV power (est.): ~${Math.round(estW)} W
+                  </p>`
+                : ""}
               ${ch.connectors.map((co) => {
                 const h = hintFor(hints, ch.serial, co.position);
+                const reason = h ? chargingReasonFromHint(h) : null;
+                const maxA = Math.min(32, feat?.max_current_a ?? 32);
+                const minA = 6;
+                const curVal = Math.round(
+                  Math.min(maxA, Math.max(minA, co.current_a ?? 16))
+                );
                 return html`
                   <div class="sov-connector-quick">
                     <div class="sov-conn-line">
@@ -92,6 +106,18 @@ export function renderChargerQuick(
                         ? html`<span class="live">Session</span>`
                         : ""}
                     </div>
+                    ${reason
+                      ? html`
+                          <div
+                            class="sov-charge-reason"
+                            title=${reason.detail}
+                          >
+                            <span class="sov-charge-reason-label"
+                              >${reason.short}</span
+                            >
+                          </div>
+                        `
+                      : ""}
                     <div class="btn-row">
                       <button
                         type="button"
@@ -115,58 +141,82 @@ export function renderChargerQuick(
                       >
                         Pause
                       </button>
+                      <button
+                        type="button"
+                        class="btn secondary"
+                        @click=${() =>
+                          svc("stop_charging", {
+                            charger_serial: ch.serial,
+                            connector_position: co.position,
+                          })}
+                      >
+                        Stop
+                      </button>
                     </div>
-                    ${h
+                    ${feat?.supports_current_limit
                       ? html`
-                          ${h.pause_explanation.code !== "charging"
-                            ? html`
-                                <div class="sov-pause-box card-inner">
-                                  <div class="sov-pause-title">
-                                    Why charging is not active
-                                  </div>
-                                  <p>
-                                    <strong>${h.pause_explanation.title}</strong>
-                                  </p>
-                                  <p class="muted small">
-                                    ${h.pause_explanation.detail}
-                                  </p>
-                                </div>
-                              `
-                            : ""}
-                          ${h.limit_chain.length
-                            ? html`
-                                <div class="sov-limit-chain">
-                                  <div class="sov-limit-chain-h">
-                                    What limits charge speed
-                                  </div>
-                                  <ol class="sov-limit-list">
-                                    ${h.limit_chain.map(
-                                      (step) => html`
-                                        <li>
-                                          <span class="sov-limit-label"
-                                            >${step.label}</span
-                                          >
-                                          <span class="mono">${step.value}</span>
-                                          <span
-                                            class="sov-src sov-src--${step.source}"
-                                            >${sourceLabel(step.source)}</span
-                                          >
-                                        </li>
-                                      `
-                                    )}
-                                  </ol>
-                                </div>
-                              `
-                            : ""}
+                          <div class="sov-current-slider-row">
+                            <label class="sov-slider-label"
+                              >Current limit (A)</label
+                            >
+                            <input
+                              type="range"
+                              min=${minA}
+                              max=${maxA}
+                              .value=${String(curVal)}
+                              @change=${(ev: Event) => {
+                                const inp = ev.target as HTMLInputElement;
+                                const v = parseInt(inp.value, 10);
+                                if (v >= minA)
+                                  void svc("set_charging_current", {
+                                    charger_serial: ch.serial,
+                                    connector_position: co.position,
+                                    current_a: v,
+                                  });
+                              }}
+                            />
+                            <span class="mono small">${curVal} A</span>
+                          </div>
                         `
-                      : co.session_active
-                        ? html`
-                            <p class="muted small">
-                              Live session—open Full controls for mode and
-                              current.
+                      : ""}
+                    ${h && h.pause_explanation.code !== "charging"
+                      ? html`
+                          <div class="sov-pause-box card-inner">
+                            <div class="sov-pause-title">Status</div>
+                            <p>
+                              <strong>${h.pause_explanation.title}</strong>
                             </p>
-                          `
-                        : ""}
+                            <p class="muted small">
+                              ${h.pause_explanation.detail}
+                            </p>
+                          </div>
+                        `
+                      : ""}
+                    ${h?.limit_chain.length
+                      ? html`
+                          <div class="sov-limit-chain">
+                            <div class="sov-limit-chain-h">
+                              What limits charge speed
+                            </div>
+                            <ol class="sov-limit-list">
+                              ${h.limit_chain.map(
+                                (step) => html`
+                                  <li>
+                                    <span class="sov-limit-label"
+                                      >${step.label}</span
+                                    >
+                                    <span class="mono">${step.value}</span>
+                                    <span
+                                      class="sov-src sov-src--${step.source}"
+                                      >${sourceLabel(step.source)}</span
+                                    >
+                                  </li>
+                                `
+                              )}
+                            </ol>
+                          </div>
+                        `
+                      : ""}
                     ${feat?.supports_smart_mode
                       ? html`
                           <div class="mode-row">

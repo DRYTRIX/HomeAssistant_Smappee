@@ -93,6 +93,24 @@ Under **Configure → Smappee Overview → Options**:
 
 Smappee API field names vary by firmware and product. Missing metrics show as empty or “stale” in the UI. EV and session endpoints are best-effort.
 
+## Troubleshooting
+
+| Symptom | What to try |
+|--------|----------------|
+| **Re-auth / invalid auth** | Settings → Devices & services → Smappee Overview → **Reconfigure** or follow the reauth flow; confirm developer app client ID/secret still valid. |
+| **Integration fails to start (“Cannot reach Smappee API”)** | Check Home Assistant outbound HTTPS, DNS, and firewall; Smappee cloud may be down—wait and reload the config entry. |
+| **Empty service location list** | Enter the **service location ID** manually (from the Smappee app). The integration also accepts `serviceLocation` / `serviceLocations` API shapes. |
+| **No charging sessions** | In **Options**, increase **session history (days)** or set **charging park ID override** if your account uses a park ID different from the service location ID. |
+| **Panel missing or blank** | Rebuild the frontend bundle (`npm run build` in `frontend/`) and restart HA; check the log for “panel static dir missing”. |
+| **Entities unavailable after API errors** | Open **Download diagnostics** on the config entry: look at `api_partial`, `last_error`, `consumption_stale`, and `coordinator_last_update_success`. |
+
+### Polling, rate limits, and retries
+
+- Default poll interval is **60s** (configurable 30–3600s under Options). Many parallel session requests can increase load; reduce **max chargers for session poll** if needed.
+- The HTTP client uses **timeouts** (see `const.py`: `HTTP_TIMEOUT_*`) and retries **GET** only on transient errors (e.g. 429/503), with exponential backoff. Charger **control** calls (PUT/PATCH) are **not** retried automatically to avoid duplicate side effects.
+
+See [CHANGELOG.md](CHANGELOG.md) for version-to-version notes.
+
 ## License
 
 MIT

@@ -12,6 +12,7 @@ from .const import (
     CHARGING_MODE_NORMAL,
     CHARGING_MODE_PAUSED,
     CHARGING_MODE_SMART,
+    DATA_COORDINATOR,
     DOMAIN,
     MODE_SMART,
     MODE_SOLAR,
@@ -119,8 +120,7 @@ class SmappeeConnectorModeSelect(CoordinatorEntity, SelectEntity):
         return _mode_to_option(conn.mode)
 
     async def async_select_option(self, option: str) -> None:
-        client = self.hass.data[DOMAIN][self.coordinator.config_entry.entry_id]["client"]
-        await client.set_connector_mode(
+        await self.coordinator.async_set_connector_mode(
             self._charger_serial,
             self._connector_position,
             _option_to_mode(option),

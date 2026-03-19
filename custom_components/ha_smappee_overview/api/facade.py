@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..models import (
     AlertItem,
     ChargingSession,
@@ -28,6 +30,11 @@ class SmappeeDomainAPI:
 
     async def list_service_locations(self) -> list[Installation]:
         return await self._client.get_servicelocations()
+
+    async def get_service_location_detail(
+        self, service_location_id: int
+    ) -> dict[str, Any] | None:
+        return await self._client.get_servicelocation_detail(service_location_id)
 
     async def get_energy_snapshot(self, service_location_id: int) -> ConsumptionSummary:
         return await self._client.get_realtime_consumption(service_location_id)

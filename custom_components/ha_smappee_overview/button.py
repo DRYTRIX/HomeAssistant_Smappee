@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CHARGING_MODE_NORMAL, CHARGING_MODE_PAUSED, DOMAIN
+from .const import CHARGING_MODE_NORMAL, CHARGING_MODE_PAUSED, DATA_COORDINATOR, DOMAIN
 from .coordinator import SmappeeOverviewCoordinator
 from .entity import SmappeeEntity, charger_device_info
 
@@ -72,8 +72,7 @@ class SmappeePauseChargingButton(CoordinatorEntity, ButtonEntity):
         )
 
     async def async_press(self) -> None:
-        client = self.hass.data[DOMAIN][self.coordinator.config_entry.entry_id]["client"]
-        await client.set_connector_mode(
+        await self.coordinator.async_set_connector_mode(
             self._charger_serial,
             1,
             CHARGING_MODE_PAUSED,
@@ -98,8 +97,7 @@ class SmappeeStartChargingButton(CoordinatorEntity, ButtonEntity):
         )
 
     async def async_press(self) -> None:
-        client = self.hass.data[DOMAIN][self.coordinator.config_entry.entry_id]["client"]
-        await client.set_connector_mode(
+        await self.coordinator.async_set_connector_mode(
             self._charger_serial,
             1,
             CHARGING_MODE_NORMAL,

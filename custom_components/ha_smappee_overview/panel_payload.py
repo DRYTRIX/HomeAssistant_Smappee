@@ -8,16 +8,34 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .api.endpoints import phase_metrics_has_three_phase
+from .assistant_heuristics import build_assistant_suggestions
+from .charging_explanation import (
+    build_connector_explanations,
+    build_limit_chain,
+    explanation_for_hint,
+    pause_explanation,
+)
 from .const import (
+    CONF_ADVANCED_PANEL,
+    CONF_ASSISTANT_ASSUMED_SESSION_KWH,
+    CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH,
     CONF_COUNTRY_CODE,
     CONF_DEBUG_SESSION_JSON_KEYS,
+    CONF_PEAK_PHASE_CURRENT_WARNING_A,
     CONF_UPDATE_INTERVAL,
+    DEFAULT_ASSISTANT_ASSUMED_SESSION_KWH,
     DEFAULT_UPDATE_INTERVAL,
 )
 from .coordinator import SmappeeOverviewCoordinator
+from .energy_intelligence import (
+    compute_energy_intelligence,
+    energy_intelligence_options_from_mapping,
+)
+from .coordinator_data import SmappeeCoordinatorData
 from .models import ChargingSession, EVCharger, ReimbursementConfig, TariffInfo
 from .panel_entity_map import build_entity_map
-from .panel_serialize import panel_data_dict, session_to_dict
+from .panel_serialize import build_discovery_payload, panel_data_dict, session_to_dict
 
 
 def _effective_mode_from_session(s: ChargingSession) -> str | None:
@@ -123,6 +141,128 @@ def _compute_today_economics(
     return round(total_kwh, 4), round(pending, 2)
 
 
+def _compute_today_charging_cost_estimate(
+    sessions: list[ChargingSession],
+    tariff_per_kwh: float | None,
+) -> float | None:
+    """Sum primary-tariff cost estimate for sessions that started today (UTC)."""
+    if tariff_per_kwh is None:
+        return None
+    start, end = _today_bounds_utc()
+    total = 0.0
+    any_energy = False
+    for s in sessions:
+        if not _session_in_range(s, start, end):
+            continue
+        if not s.energy_wh:
+            continue
+        kwh = s.energy_wh / 1000.0
+        if kwh <= 0:
+            continue
+        any_energy = True
+        total += kwh * tariff_per_kwh
+    return round(total, 4) if any_energy else None
+
+
+def _estimate_ev_power_w(
+    chargers: list[EVCharger],
+    consumption,
+) -> float | None:
+    """Rough AC power from active connector currents and phase voltages (estimated)."""
+    pm = consumption.phase_metrics if consumption else None
+    v_vals: list[float] = []
+    if pm:
+        for x in (pm.l1_voltage, pm.l2_voltage, pm.l3_voltage):
+            if x is not None and x > 0:
+                v_vals.append(float(x))
+    v_phase = sum(v_vals) / len(v_vals) if v_vals else 230.0
+    three = phase_metrics_has_three_phase(pm)
+    total = 0.0
+    any_cur = False
+    for ch in chargers:
+        for co in ch.connectors:
+            if not co.session_active:
+                continue
+            cur = co.current_a
+            if cur is None or cur <= 0:
+                continue
+            any_cur = True
+            if three:
+                total += 3.0 * v_phase * float(cur)
+            else:
+                total += v_phase * float(cur)
+    return round(total, 0) if any_cur else None
+
+
+def _build_operational_flags(
+    d: SmappeeCoordinatorData,
+    active_hints: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """High-level UI flags (all best-effort)."""
+    charging_active = False
+    for s in d.sessions_active:
+        st = (s.status or "").upper()
+        if st in ("CHARGING", "STARTED") or "CHARGING" in st:
+            charging_active = True
+            break
+    if not charging_active:
+        for ch in d.chargers:
+            for co in ch.connectors:
+                if co.session_active and (co.current_a or 0) > 0:
+                    charging_active = True
+                    break
+            if charging_active:
+                break
+
+    smart_mode_any = any(
+        co.mode == "SMART" for ch in d.chargers for co in ch.connectors
+    )
+    solar_mode_any = False
+    for ch in d.chargers:
+        for co in ch.connectors:
+            raw = co.raw or {}
+            raw_m = str(
+                raw.get("mode") or raw.get("chargingMode") or ""
+            ).upper()
+            if "SOLAR" in raw_m:
+                solar_mode_any = True
+                break
+        if solar_mode_any:
+            break
+
+    overload_suspected = False
+    for ch in d.chargers:
+        lb = _charger_load_balance(ch)
+        if lb and lb.get("reported"):
+            raw_v = lb.get("value")
+            if isinstance(raw_v, dict):
+                keys = " ".join(str(k).lower() for k in raw_v)
+                if "overload" in keys:
+                    overload_suspected = True
+                    break
+    if not overload_suspected:
+        for h in active_hints:
+            for step in h.get("limit_chain") or []:
+                if step.get("factor") == "load_balance":
+                    overload_suspected = True
+                    break
+            if overload_suspected:
+                break
+
+    solar_surplus = False
+    c = d.consumption
+    if c and c.grid_export_w is not None and c.grid_export_w > 400:
+        solar_surplus = True
+
+    return {
+        "charging_active": charging_active,
+        "smart_mode_any": smart_mode_any,
+        "solar_mode_any": solar_mode_any,
+        "overload_suspected": overload_suspected,
+        "solar_surplus": solar_surplus,
+    }
+
+
 def _raw_excerpt(raw: dict[str, Any], max_keys: int = 30) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for i, (k, v) in enumerate(raw.items()):
@@ -166,79 +306,6 @@ def _compute_month_smart_savings_eur(
     }
 
 
-def _pause_explanation(status: str, connector_mode: str) -> dict[str, str]:
-    st = (status or "").upper()
-    mode = (connector_mode or "").upper()
-    if mode == "PAUSED" or "PAUSED" in st or "PAUSE" in st:
-        if any(x in st for x in ("SMART", "WAIT", "SOLAR", "DEFER")):
-            return {
-                "code": "smart_or_solar_wait",
-                "title": "Paused by smart / solar logic",
-                "detail": (
-                    "Charging is paused while smart or solar mode waits for "
-                    "favourable grid or solar conditions. Check the Smappee app "
-                    "for the exact rule."
-                ),
-            }
-        return {
-            "code": "wallbox_paused",
-            "title": "Charging paused",
-            "detail": (
-                "The connector is in PAUSED mode or the session was paused "
-                "(manual stop from app or Home Assistant)."
-            ),
-        }
-    if any(x in st for x in ("WAIT", "DEFER", "QUEUED")):
-        return {
-            "code": "waiting",
-            "title": "Waiting to charge",
-            "detail": "Session is waiting; Smappee has not started delivery yet.",
-        }
-    if st in ("CHARGING", "STARTED") or "CHARG" in st:
-        return {
-            "code": "charging",
-            "title": "Charging",
-            "detail": "Energy is being delivered. See limit chain below for speed factors.",
-        }
-    return {
-        "code": "unknown",
-        "title": "Session status",
-        "detail": f"API status: {status or 'unknown'}. Open the Smappee app for details.",
-    }
-
-
-def _parse_load_balance_amps(val: Any, depth: int = 0) -> float | None:
-    if depth > 6:
-        return None
-    if isinstance(val, (int, float)) and 0 < val <= 80:
-        return float(val)
-    if isinstance(val, dict):
-        keys_prio = (
-            "availablecurrent",
-            "available_current",
-            "maxcurrent",
-            "max_current",
-            "value",
-        )
-        lower_map = {str(k).lower().replace("_", ""): v for k, v in val.items()}
-        for pk in keys_prio:
-            pkn = pk.replace("_", "")
-            if pkn in lower_map:
-                got = _parse_load_balance_amps(lower_map[pkn], depth + 1)
-                if got is not None:
-                    return got
-        for v in val.values():
-            got = _parse_load_balance_amps(v, depth + 1)
-            if got is not None:
-                return got
-    if isinstance(val, list):
-        for item in val:
-            got = _parse_load_balance_amps(item, depth + 1)
-            if got is not None:
-                return got
-    return None
-
-
 def _find_connector(
     chargers: list[EVCharger], serial: str, position: int
 ):
@@ -249,63 +316,6 @@ def _find_connector(
             if co.position == position:
                 return ch, co
     return None, None
-
-
-def _build_limit_chain(
-    current_a: float | None,
-    max_hardware_a: float | None,
-    connector_mode: str,
-    lb_value: Any,
-) -> list[dict[str, str]]:
-    chain: list[dict[str, str]] = []
-    mode_u = (connector_mode or "").upper()
-    if max_hardware_a is not None and max_hardware_a > 0:
-        chain.append(
-            {
-                "factor": "hardware_max",
-                "label": "Hardware maximum",
-                "value": f"{int(max_hardware_a)} A",
-                "source": "config",
-            }
-        )
-    lb_amps = _parse_load_balance_amps(lb_value)
-    if current_a is not None and current_a > 0:
-        chain.append(
-            {
-                "factor": "set_current",
-                "label": "Set current limit",
-                "value": f"{int(round(current_a))} A",
-                "source": "live",
-            }
-        )
-    if lb_amps is not None:
-        chain.append(
-            {
-                "factor": "load_balance",
-                "label": "Load balancing (parsed)",
-                "value": f"≤ {lb_amps:.0f} A",
-                "source": "estimated",
-            }
-        )
-    if mode_u == "SMART":
-        chain.append(
-            {
-                "factor": "smart_mode",
-                "label": "Smart mode",
-                "value": "May throttle below set limit",
-                "source": "estimated",
-            }
-        )
-    elif mode_u == "NORMAL" and lb_amps is None:
-        chain.append(
-            {
-                "factor": "normal_mode",
-                "label": "Standard mode",
-                "value": "Typically follows set current unless load balancing applies",
-                "source": "estimated",
-            }
-        )
-    return chain
 
 
 def _sessions_for_ev_hints(
@@ -350,6 +360,7 @@ def _sessions_for_ev_hints(
 
 
 def _build_active_ev_hints(
+    consumption: Any,
     hint_sessions: list[ChargingSession],
     chargers: list[EVCharger],
     charger_features: dict[str, Any],
@@ -376,11 +387,89 @@ def _build_active_ev_hints(
                 "connector": s.connector,
                 "status": s.status,
                 "connector_mode": mode,
-                "pause_explanation": _pause_explanation(s.status or "", mode),
-                "limit_chain": _build_limit_chain(cur_a, max_a, mode, lb_raw),
+                "pause_explanation": pause_explanation(s.status or "", mode),
+                "limit_chain": build_limit_chain(cur_a, max_a, mode, lb_raw),
+                "explanation": explanation_for_hint(
+                    consumption,
+                    chargers,
+                    charger_features,
+                    chargers_lb,
+                    s,
+                ),
             }
         )
     return hints
+
+
+_MAX_ADV_SESSION_RAW = 20
+_ADV_RAW_KEYS_SESSION = 20
+_ADV_RAW_KEYS_CHARGER = 20
+_ADV_RAW_KEYS_CONSUMPTION = 30
+
+
+def _build_advanced_payload(
+    coordinator: SmappeeOverviewCoordinator,
+    d: SmappeeCoordinatorData,
+    update_s: int,
+) -> dict[str, Any]:
+    """Heavy debug payload; only attached when integration option + WS flag allow."""
+    exc = getattr(coordinator, "last_exception", None)
+    last_exc = repr(exc) if exc else None
+    handling = getattr(coordinator, "handling_update", None)
+
+    key_union: set[str] = set()
+    for s in d.sessions_active + d.sessions_recent:
+        key_union.update(str(k) for k in s.raw)
+
+    seen_ids: set[str] = set()
+    session_rows: list[dict[str, Any]] = []
+    for s in d.sessions_active + d.sessions_recent:
+        if s.id in seen_ids:
+            continue
+        seen_ids.add(s.id)
+        session_rows.append(
+            {
+                "id": s.id,
+                "charger_serial": s.charger_serial,
+                "connector": s.connector,
+                "excerpt": _raw_excerpt(s.raw, _ADV_RAW_KEYS_SESSION),
+            }
+        )
+        if len(session_rows) >= _MAX_ADV_SESSION_RAW:
+            break
+
+    charger_rows = [
+        {
+            "serial": c.serial,
+            "excerpt": _raw_excerpt(c.raw or {}, _ADV_RAW_KEYS_CHARGER),
+        }
+        for c in d.chargers
+    ]
+
+    cons_excerpt: dict[str, Any] = {}
+    if d.consumption and d.consumption.raw:
+        cons_excerpt = _raw_excerpt(d.consumption.raw, _ADV_RAW_KEYS_CONSUMPTION)
+
+    return {
+        "coordinator_state": {
+            "config_entry_id": coordinator.config_entry.entry_id,
+            "last_update_success": getattr(
+                coordinator, "last_update_success", True
+            ),
+            "last_exception": last_exc,
+            "handling_update": handling,
+            "last_successful_update": d.last_successful_update.isoformat()
+            if d.last_successful_update
+            else None,
+            "update_interval_s": update_s,
+        },
+        "raw_excerpts": {
+            "sessions": session_rows,
+            "chargers": charger_rows,
+            "consumption": cons_excerpt,
+        },
+        "session_json_keys_union": sorted(key_union),
+    }
 
 
 def _charger_load_balance(ch) -> dict[str, Any] | None:
@@ -406,6 +495,9 @@ def _charger_load_balance(ch) -> dict[str, Any] | None:
 def build_full_panel_payload(
     hass: HomeAssistant,
     coordinator: SmappeeOverviewCoordinator,
+    *,
+    intelligence_peak_sample: dict[str, Any] | None = None,
+    include_advanced_requested: bool = False,
 ) -> dict[str, Any]:
     """Merge v1 panel dict with schema v2 fields."""
     d = coordinator.data
@@ -434,6 +526,11 @@ def build_full_panel_payload(
         reim_rate,
         cap,
     )
+    today_charging_cost_estimate_eur = _compute_today_charging_cost_estimate(
+        list(d.sessions_active) + list(d.sessions_recent),
+        tariff_f,
+    )
+    estimated_ev_power_w = _estimate_ev_power_w(list(d.chargers), d.consumption)
 
     belgium_cap_compliant: bool | None = None
     if country == "BE" and reim is not None and reim.belgium_cap_eur_per_kwh is not None:
@@ -507,6 +604,72 @@ def build_full_panel_payload(
     elif reim:
         savings_currency = str(reim.currency)
 
+    active_ev_hints = _build_active_ev_hints(
+        d.consumption,
+        _sessions_for_ev_hints(
+            list(d.sessions_active),
+            list(d.sessions_recent),
+            d.chargers,
+        ),
+        d.chargers,
+        d.charger_features,
+        chargers_lb,
+    )
+    connector_explanations = build_connector_explanations(
+        d.consumption,
+        list(d.chargers),
+        d.charger_features,
+        chargers_lb,
+        list(d.sessions_active),
+        list(d.sessions_recent),
+    )
+    operational_flags = _build_operational_flags(d, active_ev_hints)
+    peak_raw = opt.get(CONF_PEAK_PHASE_CURRENT_WARNING_A)
+    peak_phase_current_warning_a: float | None
+    try:
+        peak_phase_current_warning_a = (
+            float(peak_raw) if peak_raw is not None and peak_raw != "" else None
+        )
+    except (TypeError, ValueError):
+        peak_phase_current_warning_a = None
+
+    seen_assistant: set[str] = set()
+    sessions_for_assistant: list[ChargingSession] = []
+    for s in d.sessions_active + d.sessions_recent:
+        if s.id in seen_assistant:
+            continue
+        seen_assistant.add(s.id)
+        sessions_for_assistant.append(s)
+
+    off_peak_raw = opt.get(CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH)
+    try:
+        off_peak_f = (
+            float(off_peak_raw)
+            if off_peak_raw is not None and off_peak_raw != ""
+            else None
+        )
+    except (TypeError, ValueError):
+        off_peak_f = None
+
+    try:
+        assumed_kwh = float(
+            opt.get(CONF_ASSISTANT_ASSUMED_SESSION_KWH)
+            or DEFAULT_ASSISTANT_ASSUMED_SESSION_KWH
+        )
+    except (TypeError, ValueError):
+        assumed_kwh = float(DEFAULT_ASSISTANT_ASSUMED_SESSION_KWH)
+
+    assistant_suggestions = build_assistant_suggestions(
+        d.consumption,
+        list(d.chargers),
+        sessions_for_assistant,
+        tariff_per_kwh=tariff_f,
+        currency=savings_currency,
+        off_peak_price_per_kwh=off_peak_f,
+        assumed_session_kwh=assumed_kwh,
+        has_three_phase=d.installation_features.has_three_phase,
+    )
+
     overview_context: dict[str, Any] = {
         "month_smart_savings": _compute_month_smart_savings_eur(
             list(d.sessions_active) + list(d.sessions_recent),
@@ -514,17 +677,47 @@ def build_full_panel_payload(
             month_key,
             savings_currency,
         ),
-        "active_ev_hints": _build_active_ev_hints(
-            _sessions_for_ev_hints(
-                list(d.sessions_active),
-                list(d.sessions_recent),
-                d.chargers,
-            ),
-            d.chargers,
-            d.charger_features,
-            chargers_lb,
-        ),
+        "active_ev_hints": active_ev_hints,
+        "connector_explanations": connector_explanations,
+        "operational_flags": operational_flags,
+        "estimated_ev_power_w": estimated_ev_power_w,
+        "peak_phase_current_warning_a": peak_phase_current_warning_a,
+        "assistant_suggestions": assistant_suggestions,
     }
+
+    ei_opts = energy_intelligence_options_from_mapping(opt, country)
+    peak_kw = None
+    peak_n = None
+    peak_method = None
+    peak_unavail = None
+    if intelligence_peak_sample:
+        peak_kw = intelligence_peak_sample.get("peak_kw_sampled")
+        peak_n = intelligence_peak_sample.get("sample_count")
+        peak_method = intelligence_peak_sample.get("method")
+        peak_unavail = intelligence_peak_sample.get("unavailable_reason")
+
+    energy_intelligence = compute_energy_intelligence(
+        list(d.sessions_active) + list(d.sessions_recent),
+        list(d.tariffs),
+        d.reimbursement,
+        list(d.chargers),
+        now_utc=datetime.now(UTC),
+        peak_kw_sampled=peak_kw,
+        peak_sample_count=peak_n,
+        peak_method=peak_method,
+        peak_unavailable_reason=peak_unavail,
+        options=ei_opts,
+    )
+
+    discovery_payload = build_discovery_payload(
+        d,
+        update_interval_s=update_s,
+        coordinator_last_update_success=coordinator_ok,
+        consumption_stale=bool(d.consumption and d.consumption.stale),
+    )
+
+    advanced_allowed = bool(opt.get(CONF_ADVANCED_PANEL))
+    advanced_included = advanced_allowed and include_advanced_requested
 
     v2: dict[str, Any] = {
         "schema_version": 2,
@@ -534,12 +727,15 @@ def build_full_panel_payload(
             "update_interval_s": update_s,
             "coordinator_last_update_success": coordinator_ok,
             "consumption_stale": bool(d.consumption and d.consumption.stale),
+            "advanced_panel_allowed": advanced_allowed,
+            "advanced_data_included": advanced_included,
         },
         "entity_map": build_entity_map(hass, entry),
         "sessions_enriched": sessions_enriched,
         "economics": {
             "today_kwh": today_kwh,
             "today_pending_eur": today_pending,
+            "today_charging_cost_estimate_eur": today_charging_cost_estimate_eur,
             "tariff_primary": _tariff_primary_dict(d.tariffs),
             "tariffs_all": [
                 {
@@ -563,9 +759,15 @@ def build_full_panel_payload(
             "installation_raw_excerpt": inst_excerpt,
             "recent_session_errors": [],
             "session_json_keys_union": session_key_union,
+            "discovery_partial": d.discovery.partial,
+            "discovery_node_count": len(d.discovery.nodes),
         },
         "chargers_extended": chargers_lb,
         "overview_context": overview_context,
+        "energy_intelligence": energy_intelligence,
+        "discovery": discovery_payload,
     }
     base.update(v2)
+    if advanced_included:
+        base["advanced"] = _build_advanced_payload(coordinator, d, update_s)
     return base
