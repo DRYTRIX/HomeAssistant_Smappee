@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-03-19
+
+### Fixed
+
+- Sensor platform module: use `sensor.py` (not `sensors.py`) so Home Assistant can import `custom_components.ha_smappee_overview.sensor` and the config entry loads.
+
 ## [0.2.0] - 2026-03-19
 
 ### Added
