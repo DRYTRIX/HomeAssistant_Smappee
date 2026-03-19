@@ -65,6 +65,17 @@ All charger services require `config_entry_id`, `charger_serial`, and optionally
 - **Options**: polling interval, reimbursement rate, currency, optional Belgium cap (EUR/kWh), optional **country code** (e.g. BE for panel cap validation).
 - **Reconfigure** (integration menu): same fields + optional password to refresh OAuth tokens.
 
+## Development / tests
+
+CI installs [requirements-test.txt](requirements-test.txt) and runs `pytest tests/ -v`. Locally:
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m pytest tests/ -v
+```
+
+The integration keeps a light package `__init__.py` and lazy `api` exports so parsing/model tests do not load aiohttp until needed; panel tests still require Home Assistant (pulled in via `requirements-test.txt`).
+
 ## API capture (contributors)
 
 To help map session cost fields and charger payloads, see [docs/API_CAPTURE.md](docs/API_CAPTURE.md) and [tests/fixtures/smappee_redacted_samples.json](tests/fixtures/smappee_redacted_samples.json).
