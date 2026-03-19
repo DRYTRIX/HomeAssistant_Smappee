@@ -1,0 +1,73 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smappee API credentials",
+        "description": "Use your Smappee developer app client ID/secret and your Smappee account login.",
+        "data": {
+          "client_id": "Client ID",
+          "client_secret": "Client secret",
+          "username": "Smappee account email",
+          "password": "Password"
+        }
+      },
+      "location": {
+        "title": "Service location",
+        "description": "Choose the installation to monitor.",
+        "data": {
+          "service_location_id": "Service location"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "Your session expired. Enter your password again.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Smappee Overview",
+        "description": "Adjust polling and reimbursement options. Optionally enter password to refresh tokens.",
+        "data": {
+          "update_interval": "Update interval (seconds)",
+          "session_history_days": "Session history (days, 1–90)",
+          "max_session_chargers": "Max chargers for session poll (1–20)",
+          "charging_park_id_override": "Charging park ID override (optional)",
+          "debug_session_json_keys": "Debug session JSON keys (log + diagnostics)",
+          "reimbursement_rate_per_kwh": "Reimbursement rate per kWh",
+          "reimbursement_currency": "Currency",
+          "belgium_cap_eur_per_kwh": "Belgium reimbursement cap (EUR/kWh, optional)",
+          "country_code": "Country code",
+          "password": "Password (optional, refreshes API token)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid credentials",
+      "cannot_connect": "Could not reach Smappee",
+      "no_locations": "No service locations found — enter a location ID manually or check your account"
+    },
+    "abort": {
+      "already_configured": "This location is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "update_interval": "Update interval (seconds)",
+          "session_history_days": "Session history (days, 1–90)",
+          "max_session_chargers": "Max chargers for session poll (1–20)",
+          "charging_park_id_override": "Charging park ID override (optional)",
+          "debug_session_json_keys": "Debug session JSON keys (log + diagnostics)",
+          "reimbursement_rate_per_kwh": "Reimbursement rate per kWh",
+          "reimbursement_currency": "Currency",
+          "belgium_cap_eur_per_kwh": "Belgium cap EUR/kWh (optional)",
+          "country_code": "Country code"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,163 @@
+# Services for Smappee Overview (schemas also enforced in code)
+
+start_charging:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_smappee_overview
+    charger_serial:
+      required: true
+      example: "ABC123"
+      selector:
+        text:
+    connector_position:
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 4
+    current_a:
+      selector:
+        number:
+          min: 6
+          max: 32
+          step: 1
+
+pause_charging:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_smappee_overview
+    charger_serial:
+      required: true
+      selector:
+        text:
+    connector_position:
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 4
+
+stop_charging:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_smappee_overview
+    charger_serial:
+      required: true
+      selector:
+        text:
+    connector_position:
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 4
+
+set_charging_mode:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_smappee_overview
+    charger_serial:
+      required: true
+      selector:
+        text:
+    connector_position:
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 4
+    mode:
+      required: true
+      example: "smart"
+      selector:
+        select:
+          options:
+            - standard
+            - smart
+            - solar
+
+set_charging_current:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_smappee_overview
+    charger_serial:
+      required: true
+      selector:
+        text:
+    connector_position:
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 4
+    current_a:
+      required: true
+      selector:
+        number:
+          min: 6
+          max: 32
+
+set_led_brightness:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_smappee_overview
+    charger_serial:
+      required: true
+      selector:
+        text:
+    brightness_pct:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+
+refresh:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_smappee_overview
+
+refresh_now:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_smappee_overview
+
+set_charger_availability:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_smappee_overview
+    charger_serial:
+      required: true
+      selector:
+        text:
+    available:
+      required: true
+      selector:
+        boolean:

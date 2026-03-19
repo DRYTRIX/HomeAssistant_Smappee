@@ -1,0 +1,27 @@
+{
+  "entity": {
+    "sensor": {
+      "grid_import": { "name": "Netzbezug" },
+      "last_successful_sync": { "name": "Letzte erfolgreiche Sync" }
+    },
+    "binary_sensor": {
+      "ev_charging": { "name": "EV lädt" }
+    },
+    "switch": {
+      "charger_availability_switch": { "name": "Ladestation verfügbar" }
+    },
+    "button": {
+      "refresh_data": { "name": "Daten aktualisieren" }
+    }
+  },
+  "services": {
+    "refresh_now": {
+      "name": "Jetzt aktualisieren",
+      "description": "Daten sofort neu laden."
+    },
+    "set_charger_availability": {
+      "name": "Verfügbarkeit Ladestation",
+      "description": "Verfügbarkeit setzen (falls API unterstützt)."
+    }
+  }
+}

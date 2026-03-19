@@ -1,0 +1,152 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smappee API credentials",
+        "description": "Use your Smappee developer app client ID/secret and your Smappee account login.",
+        "data": {
+          "client_id": "Client ID",
+          "client_secret": "Client secret",
+          "username": "Smappee account email",
+          "password": "Password"
+        }
+      },
+      "location": {
+        "title": "Service location",
+        "description": "Choose the installation to monitor.",
+        "data": {
+          "service_location_id": "Service location"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "Your session expired. Enter your password again.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Smappee Overview",
+        "description": "Adjust polling and reimbursement options. Optionally enter password to refresh tokens.",
+        "data": {
+          "update_interval": "Update interval (seconds)",
+          "session_history_days": "Session history (days, 1–90)",
+          "max_session_chargers": "Max chargers for session poll (1–20)",
+          "charging_park_id_override": "Charging park ID override (optional)",
+          "debug_session_json_keys": "Debug session JSON keys (log + diagnostics)",
+          "reimbursement_rate_per_kwh": "Reimbursement rate per kWh",
+          "reimbursement_currency": "Currency",
+          "belgium_cap_eur_per_kwh": "Belgium reimbursement cap (EUR/kWh, optional)",
+          "country_code": "Country (BE enables cap validation in panel)",
+          "password": "Password (optional, refreshes API token)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid credentials",
+      "cannot_connect": "Could not reach Smappee",
+      "no_locations": "No service locations found"
+    },
+    "abort": {
+      "already_configured": "This location is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "update_interval": "Update interval (seconds)",
+          "session_history_days": "Session history (days, 1–90)",
+          "max_session_chargers": "Max chargers for session poll (1–20)",
+          "charging_park_id_override": "Charging park ID override (optional)",
+          "debug_session_json_keys": "Debug session JSON keys (log + diagnostics)",
+          "reimbursement_rate_per_kwh": "Reimbursement rate per kWh",
+          "reimbursement_currency": "Currency",
+          "belgium_cap_eur_per_kwh": "Belgium cap EUR/kWh (optional)",
+          "country_code": "Country code (BE = cap badge in panel)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "grid_import": { "name": "Grid import" },
+      "grid_export": { "name": "Grid export" },
+      "solar_power": { "name": "Solar production" },
+      "total_consumption": { "name": "Total consumption" },
+      "battery_flow": { "name": "Battery flow" },
+      "always_on": { "name": "Always on" },
+      "self_consumption": { "name": "Self-consumption" },
+      "self_sufficiency": { "name": "Self-sufficiency" },
+      "last_successful_sync": { "name": "Last successful sync" },
+      "battery_soc": { "name": "Battery charge" },
+      "phase_l1_voltage": { "name": "Phase L1 voltage" },
+      "phase_l2_voltage": { "name": "Phase L2 voltage" },
+      "phase_l3_voltage": { "name": "Phase L3 voltage" },
+      "active_charging_energy": { "name": "Active charging energy" },
+      "tariff_primary": { "name": "Primary tariff" },
+      "submeter_count": { "name": "Submeter count" },
+      "reimbursement_pending": { "name": "Reimbursement pending" }
+    },
+    "binary_sensor": {
+      "ev_charging": { "name": "EV charging" },
+      "charger_available": { "name": "Charger available" },
+      "api_partial": { "name": "API partial data" },
+      "alerts_present": { "name": "Cloud alerts" }
+    },
+    "switch": {
+      "charger_availability_switch": { "name": "Charger availability" }
+    },
+    "select": {
+      "connector_charging_mode": { "name": "Charging mode" }
+    },
+    "number": {
+      "connector_current_limit": { "name": "Current limit" }
+    },
+    "button": {
+      "refresh_data": { "name": "Refresh data" },
+      "pause_charging_button": { "name": "Pause charging" },
+      "start_charging_button": { "name": "Start charging" }
+    }
+  },
+  "services": {
+    "start_charging": {
+      "name": "Start charging",
+      "description": "Start EV charging on a connector (NORMAL mode)."
+    },
+    "pause_charging": {
+      "name": "Pause charging",
+      "description": "Pause charging on a connector."
+    },
+    "stop_charging": {
+      "name": "Stop charging",
+      "description": "Stop charging (same as pause for Smappee API)."
+    },
+    "set_charging_mode": {
+      "name": "Set charging mode",
+      "description": "Set STANDARD, SMART, or SOLAR (mapped to SMART)."
+    },
+    "set_charging_current": {
+      "name": "Set charging current",
+      "description": "Set charge current in amperes."
+    },
+    "set_led_brightness": {
+      "name": "Set charger LED brightness",
+      "description": "Set LED brightness if supported."
+    },
+    "refresh": {
+      "name": "Refresh data",
+      "description": "Force a coordinator refresh."
+    },
+    "refresh_now": {
+      "name": "Refresh now",
+      "description": "Force an immediate data refresh."
+    },
+    "set_charger_availability": {
+      "name": "Set charger availability",
+      "description": "Enable or disable charger availability via cloud API when supported."
+    }
+  }
+}

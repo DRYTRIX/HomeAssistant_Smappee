@@ -1,0 +1,56 @@
+{
+  "_comment": "Synthetic redacted shapes for tests/docs; real API keys may differ.",
+  "charging_session_examples": [
+    {
+      "id": "sess-redacted-001",
+      "connectorPosition": 1,
+      "status": "COMPLETED",
+      "energyWh": 12500,
+      "startTime": 1700000000000,
+      "endTime": 1700007200000,
+      "userId": "user-redacted",
+      "cardId": "card-redacted",
+      "solarShare": 35.5,
+      "totalCost": 4.25,
+      "currency": "EUR",
+      "tariffId": "peak-1"
+    },
+    {
+      "id": "sess-redacted-002",
+      "sessionId": "alt-id-field",
+      "cost": 2.1,
+      "priceCurrency": "EUR",
+      "userName": "RFID User A",
+      "cardName": "Tag 12"
+    }
+  ],
+  "charging_station_snippet": {
+    "serialNumber": "CHG-REDACTED",
+    "name": "Driveway",
+    "available": true,
+    "maxCurrent": 32,
+    "loadBalancingActive": true,
+    "connectors": [
+      {
+        "position": 1,
+        "mode": "SMART",
+        "current": 16,
+        "charging": false
+      }
+    ]
+  },
+  "tariffs_list_example": [
+    {
+      "id": "night",
+      "name": "Night rate",
+      "pricePerKwh": 0.12,
+      "currency": "EUR"
+    },
+    {
+      "id": "day",
+      "name": "Day rate",
+      "pricePerKwh": 0.28,
+      "currency": "EUR"
+    }
+  ]
+}

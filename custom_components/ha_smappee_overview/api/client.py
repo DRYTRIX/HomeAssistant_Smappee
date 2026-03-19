@@ -1,0 +1,281 @@
+"""Async Smappee API client."""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, Callable, Coroutine
+
+import aiohttp
+
+from ..const import API_BASE, API_V2, API_V3
+from . import auth
+from .endpoints import (
+    parse_alerts_payload,
+    parse_charging_sessions,
+    parse_consumption_summary,
+    parse_ev_charger,
+    parse_installations,
+    parse_tariffs_payload,
+    servicelocations_url,
+)
+from ..models import (
+    AlertItem,
+    ChargingSession,
+    ConsumptionSummary,
+    EVCharger,
+    Installation,
+    TariffInfo,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class SmappeeApiError(Exception):
+    """Non-auth API error."""
+
+
+class SmappeeAPIClient:
+    """HTTP client with token refresh."""
+
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        client_id: str,
+        client_secret: str,
+        access_token: str,
+        refresh_token_value: str,
+        token_expires_at: float,
+        on_token_update: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None,
+    ) -> None:
+        self._session = session
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._access_token = access_token
+        self._refresh_token = refresh_token_value
+        self._expires_at = token_expires_at
+        self._on_token_update = on_token_update
+
+    @property
+    def access_token(self) -> str:
+        return self._access_token
+
+    async def _ensure_token(self) -> None:
+        if time.time() < self._expires_at:
+            return
+        body = await auth.refresh_token(
+            self._session,
+            self._client_id,
+            self._client_secret,
+            self._refresh_token,
+        )
+        self._apply_token_body(body)
+
+    def _apply_token_body(self, body: dict[str, Any]) -> None:
+        self._access_token = str(body["access_token"])
+        if body.get("refresh_token"):
+            self._refresh_token = str(body["refresh_token"])
+        self._expires_at = auth.token_expires_at(body)
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        await self._ensure_token()
+        url = f"{API_BASE}{path}" if path.startswith("/") else f"{API_BASE}/{path}"
+        headers = {"Authorization": f"Bearer {self._access_token}"}
+        async with self._session.request(
+            method, url, headers=headers, json=json_body, params=params
+        ) as resp:
+            if resp.status == 401:
+                body = await auth.refresh_token(
+                    self._session,
+                    self._client_id,
+                    self._client_secret,
+                    self._refresh_token,
+                )
+                self._apply_token_body(body)
+                if self._on_token_update:
+                    await self._on_token_update(
+                        {
+                            "access_token": self._access_token,
+                            "refresh_token": self._refresh_token,
+                            "token_expires_at": self._expires_at,
+                        }
+                    )
+                headers["Authorization"] = f"Bearer {self._access_token}"
+                async with self._session.request(
+                    method, url, headers=headers, json=json_body, params=params
+                ) as resp2:
+                    return await self._parse_response(resp2)
+            return await self._parse_response(resp)
+
+    async def _parse_response(self, resp: aiohttp.ClientResponse) -> Any:
+        if resp.status >= 400:
+            text = await resp.text()
+            _LOGGER.debug("Smappee API %s: %s", resp.status, text[:500])
+            raise SmappeeApiError(f"http_{resp.status}")
+        ctype = resp.headers.get("Content-Type", "")
+        if "application/json" in ctype:
+            return await resp.json()
+        return await resp.text()
+
+    async def get_servicelocations(self) -> list[Installation]:
+        data = await self._request("GET", servicelocations_url())
+        if isinstance(data, list):
+            return parse_installations(data)
+        if isinstance(data, dict):
+            return parse_installations(data)
+        return []
+
+    async def get_realtime_consumption(self, service_location_id: int) -> ConsumptionSummary:
+        """Fetch latest consumption; path may vary — use aggregated endpoint."""
+        stale = False
+        raw: dict[str, Any] = {}
+        try:
+            # Common pattern: servicelocation/{id}/instantaneous or realtime
+            path = f"{API_V2}/servicelocation/{service_location_id}/instantaneous"
+            data = await self._request("GET", path)
+            if isinstance(data, dict):
+                raw = data
+        except SmappeeApiError:
+            try:
+                path = f"{API_V2}/servicelocation/{service_location_id}/consumption"
+                data = await self._request(
+                    "GET",
+                    path,
+                    params={"aggregation": 1, "from": 0, "to": 9999999999999},
+                )
+                if isinstance(data, dict):
+                    raw = data
+            except SmappeeApiError:
+                stale = True
+        if not raw:
+            stale = True
+        return parse_consumption_summary(raw, stale=stale)
+
+    async def list_charging_stations(self, service_location_id: int) -> list[EVCharger]:
+        """Discover chargers for location (best-effort)."""
+        chargers: list[EVCharger] = []
+        try:
+            path = f"{API_V3}/servicelocation/{service_location_id}/chargingstations"
+            data = await self._request("GET", path)
+            rows = data if isinstance(data, list) else data.get("chargingStations", []) if isinstance(data, dict) else []
+            for row in rows:
+                if isinstance(row, dict):
+                    chargers.append(parse_ev_charger(row))
+        except (SmappeeApiError, KeyError, TypeError) as err:
+            _LOGGER.debug("Charging stations list failed: %s", err)
+        return chargers
+
+    async def get_charging_sessions(
+        self,
+        charging_park_id_or_serial: str,
+        from_ms: int,
+        to_ms: int,
+        *,
+        service_location_id: int | None = None,
+        charging_park_id: int | None = None,
+    ) -> list[ChargingSession]:
+        serial = charging_park_id_or_serial
+        sessions: list[ChargingSession] = []
+        try:
+            path = f"{API_V3}/chargingstations/{serial}/sessions"
+            data = await self._request(
+                "GET",
+                path,
+                params={"from": from_ms, "to": to_ms},
+            )
+            sessions = parse_charging_sessions(
+                data if isinstance(data, (list, dict)) else {}, serial
+            )
+        except SmappeeApiError:
+            pass
+        park_id = (
+            charging_park_id
+            if charging_park_id is not None
+            else service_location_id
+        )
+        if not sessions and park_id is not None:
+            try:
+                path = f"{API_V3}/chargingparks/{park_id}/sessions"
+                data = await self._request(
+                    "GET",
+                    path,
+                    params={"range": f"{from_ms},{to_ms}"},
+                )
+                sessions = parse_charging_sessions(
+                    data if isinstance(data, (list, dict)) else {}, serial
+                )
+            except SmappeeApiError:
+                pass
+        return sessions
+
+    async def get_tariffs(self, service_location_id: int) -> tuple[list[TariffInfo], bool]:
+        """Return (tariffs, endpoint_reached)."""
+        for path in (
+            f"{API_V2}/servicelocation/{service_location_id}/tariffs",
+            f"{API_V3}/servicelocation/{service_location_id}/tariff",
+        ):
+            try:
+                data = await self._request("GET", path)
+            except SmappeeApiError as err:
+                if "http_404" in str(err):
+                    continue
+                return [], False
+            return parse_tariffs_payload(data), True
+        return [], False
+
+    async def get_alerts(self, service_location_id: int) -> tuple[list[AlertItem], bool]:
+        for path in (
+            f"{API_V2}/servicelocation/{service_location_id}/alerts",
+            f"{API_V2}/servicelocation/{service_location_id}/notifications",
+        ):
+            try:
+                data = await self._request("GET", path)
+            except SmappeeApiError as err:
+                if "http_404" in str(err):
+                    continue
+                return [], False
+            return parse_alerts_payload(data), True
+        return [], False
+
+    async def set_connector_mode(
+        self,
+        station_serial: str,
+        connector_position: int,
+        mode: str,
+        *,
+        limit_percent: int | None = None,
+        current_a: float | None = None,
+    ) -> None:
+        path = f"{API_V3}/chargingstations/{station_serial}/connectors/{connector_position}/mode"
+        body: dict[str, Any] = {"mode": mode}
+        if mode == "NORMAL" and (limit_percent is not None or current_a is not None):
+            if current_a is not None:
+                body["limit"] = {"unit": "AMPERE", "value": current_a}
+            elif limit_percent is not None:
+                body["limit"] = {"unit": "PERCENTAGE", "value": limit_percent}
+        await self._request("PUT", path, json_body=body)
+
+    async def set_led_brightness(self, station_serial: str, brightness_pct: int) -> None:
+        path = f"{API_V3}/chargingstations/{station_serial}"
+        await self._request("PATCH", path, json_body={"ledBrightness": brightness_pct})
+
+    async def set_charger_availability(self, station_serial: str, available: bool) -> bool:
+        """PATCH station availability. Returns False if API rejects (unsupported)."""
+        path = f"{API_V3}/chargingstations/{station_serial}"
+        try:
+            await self._request(
+                "PATCH", path, json_body={"available": available}
+            )
+        except SmappeeApiError as err:
+            msg = str(err)
+            if any(x in msg for x in ("http_400", "http_404", "http_405")):
+                return False
+            raise
+        return True
