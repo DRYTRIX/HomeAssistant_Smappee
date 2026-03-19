@@ -17,6 +17,18 @@ from ..models import (
     Submeter,
     TariffInfo,
 )
+from ..time_utils import parse_utc_epoch_ms
+from .contracts import (
+    AlertContract,
+    ChargerContract,
+    ContractValidationError,
+    ConnectorContract,
+    InstallationContract,
+    SessionContract,
+    TariffContract,
+    parse_contract,
+    safe_bool,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,23 +56,25 @@ def parse_installations(payload: list[dict[str, Any]] | dict[str, Any]) -> list[
     else:
         items = payload
     out: list[Installation] = []
-    for row in items:
-        if not isinstance(row, dict):
-            continue
+    rows = [row for row in items if isinstance(row, dict)]
+    for row in rows:
         try:
-            sid = int(row.get("serviceLocationId") or row.get("id") or 0)
-        except (TypeError, ValueError):
+            c = parse_contract(InstallationContract, row)
+        except ContractValidationError:
             continue
-        if sid == 0:
+        sid = int(c.service_location_id)  # type: ignore[union-attr]
+        if sid <= 0:
             continue
-        name = str(row.get("name") or f"Location {sid}")
-        uuid_val = row.get("uuid")
-        tz = row.get("timezone")
+        name = str(c.name or f"Location {sid}")
+        uuid_val = c.uuid
+        tz = c.timezone
         serial = None
-        if row.get("devices"):
-            devs = row["devices"]
+        if c.devices:
+            devs = c.devices
             if isinstance(devs, list) and devs:
-                serial = str(devs[0].get("serialNumber") or devs[0].get("serial") or "")
+                d0 = devs[0]
+                if isinstance(d0, dict):
+                    serial = str(d0.get("serialNumber") or d0.get("serial") or "")
         out.append(
             Installation(
                 id=sid,
@@ -78,10 +92,13 @@ def _parse_ts_ms(value: Any) -> datetime | None:
     if value is None:
         return None
     try:
-        ms = int(value)
-        return datetime.fromtimestamp(ms / 1000.0, tz=UTC)
-    except (TypeError, ValueError, OSError):
+        raw = int(value)
+    except (TypeError, ValueError):
         return None
+    # Some payloads return epoch seconds while others use milliseconds.
+    if raw <= 9_999_999_999:
+        raw *= 1000
+    return parse_utc_epoch_ms(raw)
 
 
 def parse_consumption_summary(
@@ -108,14 +125,23 @@ def parse_consumption_summary(
         for i, item in enumerate(loads):
             if not isinstance(item, dict):
                 continue
+            def item_f(*keys: str) -> float | None:
+                for k in keys:
+                    v = item.get(k)
+                    if v is not None:
+                        try:
+                            return float(v)
+                        except (TypeError, ValueError):
+                            pass
+                return None
             sid = str(item.get("id") or item.get("channel") or i)
             name = str(item.get("name") or item.get("label") or f"Load {sid}")
             submeters.append(
                 Submeter(
                     id=sid,
                     name=name,
-                    power_w=f("power", "activePower"),
-                    energy_wh=f("energy", "totalEnergy"),
+                    power_w=item_f("power", "activePower"),
+                    energy_wh=item_f("energy", "totalEnergy"),
                     phase=item.get("phase") if isinstance(item.get("phase"), int) else None,
                     raw=item,
                 )
@@ -201,19 +227,16 @@ def parse_tariffs_payload(payload: Any) -> list[TariffInfo]:
     else:
         return []
     out: list[TariffInfo] = []
-    for row in rows:
-        if not isinstance(row, dict):
+    row_dicts = [row for row in rows if isinstance(row, dict)]
+    for row in row_dicts:
+        try:
+            c = parse_contract(TariffContract, row)
+        except ContractValidationError:
             continue
-        tid = row.get("id") or row.get("tariffId")
-        name = row.get("name") or row.get("label")
-        cur = row.get("currency")
-        price = row.get("pricePerKwh") or row.get("price") or row.get("unitPrice")
-        pf: float | None = None
-        if price is not None:
-            try:
-                pf = float(price)
-            except (TypeError, ValueError):
-                pass
+        tid = c.tariff_id  # type: ignore[union-attr]
+        name = c.name  # type: ignore[union-attr]
+        cur = c.currency  # type: ignore[union-attr]
+        pf = c.price  # type: ignore[union-attr]
         out.append(
             TariffInfo(
                 id=str(tid) if tid is not None else None,
@@ -243,17 +266,20 @@ def parse_alerts_payload(payload: Any) -> list[AlertItem]:
     else:
         return []
     out: list[AlertItem] = []
-    for row in rows:
-        if not isinstance(row, dict):
+    row_dicts = [row for row in rows if isinstance(row, dict)]
+    for row in row_dicts:
+        try:
+            c = parse_contract(AlertContract, row)
+        except ContractValidationError:
             continue
-        aid = row.get("id") or row.get("alertId") or row.get("uuid")
+        aid = c.alert_id  # type: ignore[union-attr]
         if aid is None:
-            aid = str(hash(frozenset(row.items())))
-        msg = row.get("message") or row.get("text") or row.get("title") or ""
+            aid = f"alert-{str(row)[:80]}"
+        msg = c.message or ""  # type: ignore[union-attr]
         if not msg:
             continue
-        sev = row.get("severity") or row.get("level") or row.get("type")
-        ts = _parse_ts_ms(row.get("timestamp") or row.get("created") or row.get("time"))
+        sev = c.severity  # type: ignore[union-attr]
+        ts = _parse_ts_ms(c.timestamp_raw)  # type: ignore[union-attr]
         out.append(
             AlertItem(
                 id=str(aid),
@@ -279,33 +305,39 @@ def phase_metrics_has_three_phase(pm: PhaseMetrics | None) -> bool:
 
 def parse_ev_charger(row: dict[str, Any]) -> EVCharger:
     """Parse charging station from API."""
-    serial = str(row.get("serialNumber") or row.get("serial") or "")
-    name = str(row.get("name") or serial or "Charger")
+    try:
+        c = ChargerContract.model_validate(row)
+    except Exception:
+        c = ChargerContract(serial=str(row.get("serialNumber") or row.get("serial") or ""))
+    serial = str(c.serial or "")
+    name = str(c.name or serial or "Charger")
     connectors: list[ConnectorState] = []
     conns = row.get("connectors") or row.get("connectorStates") or []
-    if isinstance(conns, list):
-        for c in conns:
-            if not isinstance(c, dict):
-                continue
-            pos = int(c.get("position") or c.get("connectorPosition") or len(connectors) + 1)
-            mode = str(c.get("mode") or "UNKNOWN").upper()
-            if mode not in ("NORMAL", "SMART", "PAUSED"):
-                mode = "UNKNOWN"
-            connectors.append(
-                ConnectorState(
-                    position=pos,
-                    mode=mode,  # type: ignore[arg-type]
-                    current_a=_float_or_none(c.get("current") or c.get("currentA")),
-                    session_active=bool(c.get("charging") or c.get("sessionActive")),
-                    led_brightness_pct=_int_or_none(c.get("ledBrightness")),
-                    raw=c,
-                )
+    conn_rows = [x for x in conns if isinstance(x, dict)] if isinstance(conns, list) else []
+    for conn_row in conn_rows:
+        try:
+            cc = parse_contract(ConnectorContract, conn_row)
+        except ContractValidationError:
+            continue
+        pos = cc.position if cc.position > 0 else len(connectors) + 1  # type: ignore[union-attr]
+        mode = str(cc.mode or "UNKNOWN").upper()  # type: ignore[union-attr]
+        if mode not in ("NORMAL", "SMART", "PAUSED"):
+            mode = "UNKNOWN"
+        connectors.append(
+            ConnectorState(
+                position=pos,
+                mode=mode,  # type: ignore[arg-type]
+                current_a=cc.current,  # type: ignore[union-attr]
+                session_active=safe_bool(cc.charging, default=False),  # type: ignore[union-attr]
+                led_brightness_pct=cc.led_brightness,  # type: ignore[union-attr]
+                raw=conn_row,
             )
+        )
     return EVCharger(
         serial=serial,
         name=name,
         connectors=connectors,
-        availability=bool(row.get("available", True)),
+        availability=safe_bool(c.available, default=True),
         last_sync=datetime.now(UTC),
         raw=dict(row),
     )
@@ -376,27 +408,31 @@ def parse_charging_session(row: dict[str, Any], charger_serial: str = "") -> Cha
     """Parse one session row."""
     if not isinstance(row, dict):
         return None
-    sid = str(row.get("id") or row.get("sessionId") or "")
-    if not sid:
+    try:
+        c = SessionContract.model_validate(row)
+    except Exception:
         return None
-    connector = int(row.get("connectorPosition") or row.get("connector") or 1)
-    status = str(row.get("status") or row.get("state") or "UNKNOWN")
+    sid = str(c.session_id).strip()
+    if sid == "":
+        return None
+    connector = c.connector_position if c.connector_position > 0 else 1
+    status = str(c.status or "UNKNOWN")
     cost_amt, cost_cur, tariff_id = _session_cost_fields(row)
     user_lbl, card_lbl = _session_user_card_labels(row)
     return ChargingSession(
         id=sid,
-        charger_serial=str(row.get("chargingStationSerial") or charger_serial),
+        charger_serial=str(c.charging_station_serial or charger_serial),
         connector=connector,
         status=status,
-        energy_wh=_float_or_none(row.get("energy") or row.get("energyWh")),
-        duration_s=_int_or_none(row.get("duration") or row.get("durationSeconds")),
-        start=_parse_ts_ms(row.get("startTime") or row.get("start")),
-        end=_parse_ts_ms(row.get("endTime") or row.get("end")),
-        user_id=str(row["userId"]) if row.get("userId") else None,
-        card_id=str(row["cardId"]) if row.get("cardId") else None,
+        energy_wh=c.energy_wh,
+        duration_s=c.duration_seconds,
+        start=_parse_ts_ms(c.start_raw),
+        end=_parse_ts_ms(c.end_raw),
+        user_id=str(c.user_id) if c.user_id is not None else None,
+        card_id=str(c.card_id) if c.card_id is not None else None,
         user_label=user_lbl,
         card_label=card_lbl,
-        solar_share_pct=_float_or_none(row.get("solarShare")),
+        solar_share_pct=c.solar_share,
         cost_amount=cost_amt,
         cost_currency=cost_cur,
         tariff_id=tariff_id,

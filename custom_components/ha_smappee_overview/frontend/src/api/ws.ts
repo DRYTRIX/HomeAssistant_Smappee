@@ -1,8 +1,10 @@
 import type { HomeAssistant } from "../types/hass.js";
 import type { PanelPayload } from "../types/panel.js";
+import { logClientEvent } from "../observability.js";
 
 const WS_PANEL = "ha_smappee_overview/get_panel_data";
 const WS_LIST = "ha_smappee_overview/list_entries";
+const WS_HEALTH = "ha_smappee_overview/health_check";
 
 export interface ConfigEntryInfo {
   entry_id: string;
@@ -33,17 +35,26 @@ export function normalizePanelPayload(raw: unknown): PanelPayload {
     throw new Error("Panel payload is not an object");
   }
   const o = raw as Record<string, unknown>;
+  const warnings: string[] = [];
   if (!Array.isArray(o.chargers)) {
-    throw new Error("Panel payload missing chargers array");
+    warnings.push("missing_chargers_array_defaulted");
+    o.chargers = [];
   }
   if (!Array.isArray(o.sessions_active)) {
+    warnings.push("missing_sessions_active_defaulted");
     o.sessions_active = [];
   }
   if (!Array.isArray(o.sessions_recent)) {
+    warnings.push("missing_sessions_recent_defaulted");
     o.sessions_recent = [];
   }
   if (!Array.isArray(o.tariffs)) {
+    warnings.push("missing_tariffs_defaulted");
     o.tariffs = [];
+  }
+  if (!Array.isArray(o.alerts)) {
+    warnings.push("missing_alerts_defaulted");
+    o.alerts = [];
   }
   if (!o.discovery || typeof o.discovery !== "object") {
     o.discovery = {
@@ -63,13 +74,15 @@ export function normalizePanelPayload(raw: unknown): PanelPayload {
   if (!disc.summary || typeof disc.summary !== "object") {
     disc.summary = { ok: 0, offline: 0, stale: 0, unknown: 0 };
   }
+  (o as Record<string, unknown>).__normalize_warnings = warnings;
   return o as unknown as PanelPayload;
 }
 
 export async function fetchPanelData(
   hass: HomeAssistant,
   configEntryId: string,
-  includeAdvanced = false
+  includeAdvanced = false,
+  debugLogs = false
 ): Promise<PanelPayload> {
   const msg: Record<string, unknown> = {
     type: WS_PANEL,
@@ -78,8 +91,22 @@ export async function fetchPanelData(
   if (includeAdvanced) {
     msg.include_advanced = true;
   }
+  if (debugLogs) {
+    msg.include_debug = true;
+  }
   const res = await callWs(hass, msg);
-  return normalizePanelPayload(res);
+  const normalized = normalizePanelPayload(res);
+  if (debugLogs) {
+    const p = normalized as unknown as Record<string, unknown>;
+    logClientEvent("debug", "ws.fetch_panel_data", "panel payload", {
+      keys: Object.keys(p),
+      chargers: (normalized.chargers || []).length,
+      sessions_active: (normalized.sessions_active || []).length,
+      sessions_recent: (normalized.sessions_recent || []).length,
+      normalize_warnings: p.__normalize_warnings || [],
+    });
+  }
+  return normalized;
 }
 
 export interface HistoryPoint {
@@ -87,18 +114,39 @@ export interface HistoryPoint {
   v: number;
 }
 
+export interface HealthCheckPayload {
+  status: "ok" | "degraded";
+  entry_id: string;
+  last_successful_update: string | null;
+  api_partial: boolean;
+  last_error: string | null;
+  backend_health: Record<string, string>;
+  validation_warnings: string[];
+}
+
+export async function fetchHealthCheck(
+  hass: HomeAssistant,
+  configEntryId: string
+): Promise<HealthCheckPayload> {
+  return (await callWs(hass, {
+    type: WS_HEALTH,
+    config_entry_id: configEntryId,
+  })) as HealthCheckPayload;
+}
+
 /** Last 24h power history for sparklines (downsampled). */
 export async function fetchHistorySparklines(
   hass: HomeAssistant,
   entityIds: string[],
-  maxPoints = 48
+  maxPoints = 48,
+  windowMinutes = 24 * 60
 ): Promise<Record<string, HistoryPoint[]>> {
   const ids = entityIds.filter(Boolean);
   if (!ids.length || typeof hass.callWS !== "function") {
     return {};
   }
   const end = new Date();
-  const start = new Date(end.getTime() - 24 * 3600 * 1000);
+  const start = new Date(end.getTime() - windowMinutes * 60 * 1000);
   let rows: unknown;
   try {
     rows = await hass.callWS({
@@ -110,7 +158,10 @@ export async function fetchHistorySparklines(
       no_attributes: true,
       significant_changes_only: true,
     });
-  } catch {
+  } catch (err) {
+    logClientEvent("warning", "ws.fetch_history", "history fetch failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return {};
   }
   const out: Record<string, HistoryPoint[]> = {};

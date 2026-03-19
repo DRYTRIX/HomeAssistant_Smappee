@@ -6,7 +6,11 @@ import {
   listEntries,
 } from "./api/ws.js";
 import { createSmappeeStore } from "./state/store.js";
-import { selectStaleBanner } from "./state/selectors.js";
+import {
+  deriveWidgetStatus,
+  selectDashboardUiState,
+  selectStaleBanner,
+} from "./state/selectors.js";
 import type { HomeAssistant } from "./types/hass.js";
 import type { PanelProps } from "./types/hass.js";
 import type { PanelPayload, TabId } from "./types/panel.js";
@@ -15,17 +19,32 @@ import { renderDevicesTab } from "./ui/devices-tab.js";
 import { renderAdvancedPanel } from "./ui/advanced-panel.js";
 import { renderDiagnosticsTab } from "./ui/diagnostics.js";
 import { renderEconomicsTab } from "./ui/economics.js";
+import { renderHealthTab } from "./ui/health.js";
 import { renderOverviewTab } from "./ui/overview/overview-tab.js";
 import { overviewSectionStyles } from "./ui/overview/styles.js";
 import { renderPageSkeleton } from "./ui/skeleton.js";
 import { renderSessionsTab } from "./ui/sessions.js";
+import {
+  renderNoDataReceivedState,
+  renderStateError,
+  renderWidgetStatus,
+} from "./ui/state-ui.js";
+import { logClientEvent } from "./observability.js";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
+  { id: "devices", label: "Devices" },
   { id: "chargers", label: "Chargers" },
   { id: "sessions", label: "Sessions" },
   { id: "economics", label: "Economics" },
+  { id: "health", label: "Health" },
   { id: "diagnostics", label: "Diagnostics" },
+];
+const TIME_PRESETS: Array<{ id: "live" | "5m" | "1h" | "24h"; label: string }> = [
+  { id: "live", label: "Live" },
+  { id: "5m", label: "5m" },
+  { id: "1h", label: "1h" },
+  { id: "24h", label: "24h" },
 ];
 
 @customElement("ha-smappee-overview-panel")
@@ -41,6 +60,10 @@ export class HaSmappeeOverviewPanel extends LitElement {
   private _store = createSmappeeStore("");
 
   private _unsub?: () => void;
+  private _inflightPanel?: Promise<void>;
+  private _inflightHistory?: Promise<void>;
+  private _historyKey = "";
+  private _lastPanelLoadAt = 0;
 
   private _socketOpenHandler = (): void => {
     void this._loadPanel(false);
@@ -49,6 +72,10 @@ export class HaSmappeeOverviewPanel extends LitElement {
   static styles = [
     css`
     :host {
+      --smappee-space-sm: 10px;
+      --smappee-space-md: 14px;
+      --smappee-radius: 10px;
+      --smappee-card-radius: 12px;
       display: flex;
       flex-direction: column;
       height: 100%;
@@ -75,7 +102,7 @@ export class HaSmappeeOverviewPanel extends LitElement {
       max-width: 1400px;
       margin: 0 auto;
       width: 100%;
-      padding: 12px 16px 24px;
+      padding: var(--smappee-space-sm) var(--smappee-space-md) 24px;
       box-sizing: border-box;
     }
     .header {
@@ -86,6 +113,47 @@ export class HaSmappeeOverviewPanel extends LitElement {
       margin-bottom: 12px;
       padding-bottom: 12px;
       border-bottom: 1px solid var(--divider-color);
+    }
+    .status-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .status-item {
+      border: 1px solid var(--divider-color);
+      border-radius: var(--smappee-radius);
+      padding: 8px 10px;
+      background: var(--card-background-color);
+    }
+    .status-item strong {
+      display: block;
+      font-size: 12px;
+      color: var(--secondary-text-color);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .time-presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+    .time-preset-btn {
+      border: 1px solid var(--divider-color);
+      border-radius: 999px;
+      padding: 6px 12px;
+      background: var(--secondary-background-color);
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .time-preset-btn.active {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+      font-weight: 600;
+      background: color-mix(in srgb, var(--primary-color) 10%, transparent);
     }
     .header h1 {
       margin: 0;
@@ -123,7 +191,7 @@ export class HaSmappeeOverviewPanel extends LitElement {
       background: var(--card-background-color);
       color: var(--primary-text-color);
       border: 1px solid var(--divider-color);
-      border-radius: 8px;
+      border-radius: var(--smappee-radius);
       padding: 8px 10px;
       font-size: 14px;
     }
@@ -201,7 +269,7 @@ export class HaSmappeeOverviewPanel extends LitElement {
     .tab-error {
       padding: 16px;
       background: var(--card-background-color);
-      border-radius: 12px;
+      border-radius: var(--smappee-card-radius);
     }
     .card {
       background: var(--card-background-color);
@@ -668,6 +736,66 @@ export class HaSmappeeOverviewPanel extends LitElement {
       font-size: 1.15rem;
       margin: 12px 0;
     }
+    .state-card {
+      border: 1px solid var(--divider-color);
+      border-radius: 12px;
+      background: var(--card-background-color);
+      padding: 14px 16px;
+      margin-bottom: 12px;
+    }
+    .state-card h3 {
+      margin: 0 0 8px;
+    }
+    .state-card-error {
+      border-left: 4px solid var(--error-color);
+    }
+    .state-card-empty {
+      border-left: 4px solid var(--primary-color);
+    }
+    .state-cause-list {
+      margin: 4px 0 0;
+      padding-left: 18px;
+    }
+    .widget-status-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .fresh-pill {
+      border-radius: 999px;
+      padding: 2px 8px;
+      text-transform: uppercase;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .fresh-live {
+      background: color-mix(in srgb, var(--success-color, #2e7d32) 20%, transparent);
+      color: var(--success-color, #2e7d32);
+    }
+    .fresh-stale {
+      background: color-mix(in srgb, var(--warning-color) 24%, transparent);
+    }
+    .fresh-offline {
+      background: color-mix(in srgb, var(--error-color) 20%, transparent);
+      color: var(--error-color);
+    }
+    .widget-skel {
+      margin: 10px 0;
+    }
+    @media (max-width: 920px) {
+      .wrap {
+        padding: var(--smappee-space-sm);
+      }
+      .header-actions {
+        width: 100%;
+      }
+      .tabs button {
+        flex: 1 1 auto;
+      }
+    }
   `,
     overviewSectionStyles,
   ];
@@ -749,29 +877,37 @@ export class HaSmappeeOverviewPanel extends LitElement {
     if (!this.hass) return;
     const { selectedEntryId } = this._store.getState();
     if (!selectedEntryId) return;
-    if (withSkeleton) {
-      this._store.setState({ connection: "loading", panelError: null });
-    }
-    try {
-      const panel = await fetchPanelData(
-        this.hass,
-        selectedEntryId,
-        this._store.getState().advancedMode
-      );
-      this._store.setState({
-        panel,
-        connection: "connected",
-        panelError: null,
-        lastFetchAt: Date.now(),
-        tabError: null,
-      });
-      void this._loadHistory(panel);
-    } catch (e) {
-      this._store.setState({
-        connection: "error",
-        panelError: e instanceof Error ? e.message : String(e),
-      });
-    }
+    const now = Date.now();
+    if (!withSkeleton && this._inflightPanel) return this._inflightPanel;
+    if (!withSkeleton && now - this._lastPanelLoadAt < 1500) return;
+    if (withSkeleton) this._store.setState({ connection: "loading", panelError: null });
+    this._inflightPanel = (async () => {
+      try {
+        const panel = await fetchPanelData(
+          this.hass!,
+          selectedEntryId,
+          this._store.getState().advancedMode || this._store.getState().debugMode,
+          this._store.getState().debugMode
+        );
+        this._lastPanelLoadAt = Date.now();
+        this._store.setState({
+          panel,
+          connection: "connected",
+          panelError: null,
+          lastFetchAt: Date.now(),
+          tabError: null,
+        });
+        void this._loadHistory(panel);
+      } catch (e) {
+        this._store.setState({
+          connection: "error",
+          panelError: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        this._inflightPanel = undefined;
+      }
+    })();
+    return this._inflightPanel;
   }
 
   private async _loadHistory(panel: PanelPayload): Promise<void> {
@@ -780,13 +916,25 @@ export class HaSmappeeOverviewPanel extends LitElement {
     if (!em) return;
     const ids = Object.values(em).filter((x): x is string => Boolean(x));
     if (!ids.length) return;
+    const preset = this._store.getState().timePreset;
+    const windowMinutes =
+      preset === "5m" ? 5 : preset === "1h" ? 60 : preset === "24h" ? 24 * 60 : 5;
+    const key = `${ids.slice().sort().join(",")}::${windowMinutes}`;
+    if (this._inflightHistory && key === this._historyKey) return this._inflightHistory;
+    this._historyKey = key;
     this._store.setState({ historyLoading: true });
-    try {
-      const hist = await fetchHistorySparklines(this.hass, ids);
-      this._store.setState({ historyByEntity: hist, historyLoading: false });
-    } catch {
-      this._store.setState({ historyLoading: false });
-    }
+    this._inflightHistory = (async () => {
+      try {
+        const hist = await fetchHistorySparklines(this.hass!, ids, 48, windowMinutes);
+        this._store.setState({ historyByEntity: hist, historyLoading: false });
+      } catch {
+        logClientEvent("warning", "panel.load_history", "history load failed");
+        this._store.setState({ historyLoading: false });
+      } finally {
+        this._inflightHistory = undefined;
+      }
+    })();
+    return this._inflightHistory;
   }
 
   private async _onRefresh(): Promise<void> {
@@ -796,8 +944,16 @@ export class HaSmappeeOverviewPanel extends LitElement {
       await this.hass.callService("ha_smappee_overview", "refresh", {
         config_entry_id: id,
       });
-    } catch {
-      /* still fetch */
+    } catch (err) {
+      this._store.setState({
+        panelError:
+          err instanceof Error
+            ? `Refresh service failed: ${err.message}`
+            : "Refresh service failed",
+      });
+      logClientEvent("warning", "panel.refresh", "refresh service call failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     await this._loadPanel(false);
   }
@@ -820,11 +976,30 @@ export class HaSmappeeOverviewPanel extends LitElement {
               this._store.setState({ activeTab: "chargers" }),
             onOpenDiagnostics: () =>
               this._store.setState({ activeTab: "diagnostics" }),
+            widgetStatus: deriveWidgetStatus(panel, "device"),
+            loading: st.connection === "loading",
+            layoutTemplate: st.overviewTemplate,
+            layoutOrder: st.overviewOrder,
+            onTemplateChange: (template) =>
+              this._store.persistOverviewLayout(template, st.overviewOrder),
+            onLayoutReorder: (order) =>
+              this._store.persistOverviewLayout(st.overviewTemplate, order),
           });
         case "devices":
-          return renderDevicesTab(panel);
+          return renderDevicesTab(
+            panel,
+            deriveWidgetStatus(panel, "protocol"),
+            st.connection === "loading"
+          );
         case "chargers":
-          return renderChargersTab(panel, hass, id, () => void this._loadPanel(false));
+          return renderChargersTab(
+            panel,
+            hass,
+            id,
+            () => void this._loadPanel(false),
+            deriveWidgetStatus(panel, "device"),
+            st.connection === "loading"
+          );
         case "sessions":
           return renderSessionsTab(
             panel,
@@ -853,21 +1028,35 @@ export class HaSmappeeOverviewPanel extends LitElement {
             },
             () => {
               /* export placeholder */
-            }
+            },
+            deriveWidgetStatus(panel, "protocol"),
+            st.timePreset,
+            st.connection === "loading"
           );
         case "economics":
           return renderEconomicsTab(
             panel,
             st.economicsPeriod,
-            (per) => this._store.setState({ economicsPeriod: per })
+            (per) => this._store.setState({ economicsPeriod: per }),
+            deriveWidgetStatus(panel, "protocol"),
+            st.connection === "loading"
           );
         case "diagnostics":
-          return renderDiagnosticsTab(panel);
+          return renderDiagnosticsTab(
+            panel,
+            deriveWidgetStatus(panel, "protocol"),
+            st.debugMode,
+            st.connection === "loading"
+          );
+        case "health":
+          return renderHealthTab(panel);
         default:
           return html``;
       }
     } catch (e) {
-      console.error(e);
+      logClientEvent("error", "panel.render_tab", "tab render failed", {
+        error: e instanceof Error ? e.message : String(e),
+      });
       return html`
         <div class="tab-error">
           <p class="banner err">Something went wrong in this tab.</p>
@@ -896,6 +1085,24 @@ export class HaSmappeeOverviewPanel extends LitElement {
     const panel = st.panel;
     const staleMsg = selectStaleBanner(panel);
     const alerts = panel?.alerts?.length ?? 0;
+    const localAlerts = panel?.health?.alerts ?? [];
+    const uiState = selectDashboardUiState(
+      panel,
+      st.connection,
+      st.panelError,
+      st.sessionsFilters
+    );
+    const connections = panel?.chargers?.length ?? 0;
+    const ageS =
+      panel?.last_successful_update != null
+        ? Math.max(
+            0,
+            Math.round(
+              (Date.now() - new Date(panel.last_successful_update).getTime()) / 1000
+            )
+          )
+        : null;
+    const dataRate = ageS == null ? "n/a" : ageS < 30 ? "high" : ageS < 120 ? "normal" : "low";
 
     return html`
       <div class="wrap">
@@ -959,12 +1166,54 @@ export class HaSmappeeOverviewPanel extends LitElement {
               />
               Advanced mode
             </label>
+            <label class="adv-toggle">
+              <input
+                type="checkbox"
+                .checked=${st.debugMode}
+                @change=${(e: Event) => {
+                  const on = (e.target as HTMLInputElement).checked;
+                  this._store.persistDebugMode(on);
+                  void this._loadPanel(false);
+                }}
+              />
+              Debug mode
+            </label>
           </div>
         </header>
+        <div class="status-bar">
+          <div class="status-item">
+            <strong>System health</strong>
+            ${panel?.meta?.coordinator_last_update_success === false ? "Degraded" : "Healthy"}
+          </div>
+          <div class="status-item">
+            <strong>Active connections</strong>
+            ${connections}
+          </div>
+          <div class="status-item">
+            <strong>Data rate</strong>
+            ${dataRate}
+          </div>
+        </div>
+        <div class="time-presets" role="group" aria-label="Time controls">
+          ${TIME_PRESETS.map(
+            (tp) => html`<button
+              type="button"
+              class="time-preset-btn ${st.timePreset === tp.id ? "active" : ""}"
+              @click=${() => {
+                this._store.setState({ timePreset: tp.id });
+                const current = this._store.getState().panel;
+                if (current) void this._loadHistory(current);
+              }}
+            >
+              ${tp.label}
+            </button>`
+          )}
+          <span class="muted small">Active range: ${st.timePreset}</span>
+        </div>
         ${st.panelError && st.connection === "error"
           ? html`
               <div class="banner err">
-                ${st.panelError}
+                Connection failed: ${st.panelError}
                 <button
                   type="button"
                   class="btn secondary"
@@ -978,6 +1227,11 @@ export class HaSmappeeOverviewPanel extends LitElement {
           : nothing}
         ${staleMsg
           ? html`<div class="banner">${staleMsg}</div>`
+          : nothing}
+        ${localAlerts.length
+          ? html`<div class="banner">
+              ${localAlerts.length} local observability alert(s) active.
+            </div>`
           : nothing}
         <nav class="tabs" role="tablist">
           ${TABS.map(
@@ -994,12 +1248,19 @@ export class HaSmappeeOverviewPanel extends LitElement {
             `
           )}
         </nav>
-        ${st.connection === "loading" && !panel
+        ${uiState === "loading" && !panel
           ? renderPageSkeleton()
-          : panel
-            ? html`${this._renderTab(panel)}
-                ${st.advancedMode ? renderAdvancedPanel(panel) : nothing}`
-            : html`<p class="muted">No data</p>`}
+          : uiState === "error_connection" ||
+              uiState === "error_no_data_range" ||
+              uiState === "error_parsing"
+            ? renderStateError(uiState)
+            : uiState === "empty_no_devices"
+              ? renderNoDataReceivedState()
+              : panel
+                ? html`${renderWidgetStatus(deriveWidgetStatus(panel, "protocol"))}
+                    ${this._renderTab(panel)}
+                ${st.advancedMode || st.debugMode ? renderAdvancedPanel(panel) : nothing}`
+                : renderNoDataReceivedState()}
       </div>
     `;
   }

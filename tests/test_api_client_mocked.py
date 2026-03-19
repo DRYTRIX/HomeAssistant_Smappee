@@ -118,3 +118,52 @@ def test_put_no_retry_on_503(future_token_expiry: float) -> None:
         session.request.assert_called_once()
 
     asyncio.run(run())
+
+
+def test_get_tariffs_raises_on_non_404(future_token_expiry: float) -> None:
+    async def run() -> None:
+        bad = _error_response(503)
+        session = MagicMock()
+        session.request = MagicMock(return_value=_ctx_for_response(bad))
+        client = SmappeeAPIClient(
+            session,
+            "cid",
+            "csec",
+            "atok",
+            "rtok",
+            future_token_expiry,
+        )
+        with pytest.raises(SmappeeApiError, match="http_503"):
+            await client.get_tariffs(1)
+
+    asyncio.run(run())
+
+
+def test_get_sessions_raises_when_both_endpoints_fail(future_token_expiry: float) -> None:
+    async def run() -> None:
+        bad_station = _error_response(503)
+        bad_park = _error_response(503)
+        session = MagicMock()
+        # GET endpoints retry on transient errors; keep headroom so fallback
+        # path/extra probes do not exhaust mocked responses.
+        session.request = MagicMock(
+            side_effect=[_ctx_for_response(bad_station)] * 8
+            + [_ctx_for_response(bad_park)] * 8
+        )
+        client = SmappeeAPIClient(
+            session,
+            "cid",
+            "csec",
+            "atok",
+            "rtok",
+            future_token_expiry,
+        )
+        with pytest.raises(SmappeeApiError, match="http_503"):
+            await client.get_charging_sessions(
+                "SN",
+                1,
+                2,
+                service_location_id=1,
+            )
+
+    asyncio.run(run())

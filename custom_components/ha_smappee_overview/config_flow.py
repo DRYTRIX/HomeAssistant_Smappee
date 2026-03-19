@@ -29,6 +29,7 @@ from .const import (
     CONF_COUNTRY_CODE,
     CONF_ADVANCED_PANEL,
     CONF_DEBUG_SESSION_JSON_KEYS,
+    CONF_DEMO_MODE,
     CONF_EI_CHARGE_PHASES,
     CONF_EI_ENABLE_CAPACITY_TRACKING,
     CONF_EI_LINE_VOLTAGE,
@@ -260,6 +261,7 @@ class SmappeeOverviewConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_DEBUG_SESSION_JSON_KEYS, False
                 ),
                 CONF_ADVANCED_PANEL: user_input.get(CONF_ADVANCED_PANEL, False),
+                CONF_DEMO_MODE: user_input.get(CONF_DEMO_MODE, False),
                 "reimbursement_rate_per_kwh": float(
                     user_input.get("reimbursement_rate_per_kwh", 0) or 0
                 ),
@@ -313,6 +315,21 @@ class SmappeeOverviewConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                 ),
             }
+            if user_input.get("test_connection_now"):
+                session = await _get_session(self.hass)
+                client = SmappeeAPIClient(
+                    session,
+                    entry.data[CONF_CLIENT_ID],
+                    entry.data[CONF_CLIENT_SECRET],
+                    entry.data[CONF_ACCESS_TOKEN],
+                    entry.data.get(CONF_REFRESH_TOKEN, ""),
+                    float(entry.data[CONF_TOKEN_EXPIRES_AT]),
+                )
+                api = SmappeeDomainAPI(client)
+                try:
+                    await api.list_service_locations()
+                except (SmappeeAuthError, aiohttp.ClientError):
+                    errors["base"] = "cannot_connect"
             data_updates: dict[str, Any] = {}
             pwd = user_input.get("password")
             if pwd:
@@ -375,6 +392,10 @@ class SmappeeOverviewConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Optional(
                         CONF_ADVANCED_PANEL,
                         default=entry.options.get(CONF_ADVANCED_PANEL, False),
+                    ): cv.boolean,
+                    vol.Optional(
+                        CONF_DEMO_MODE,
+                        default=entry.options.get(CONF_DEMO_MODE, False),
                     ): cv.boolean,
                     vol.Optional(
                         "reimbursement_rate_per_kwh",
@@ -448,6 +469,7 @@ class SmappeeOverviewConfigFlow(ConfigFlow, domain=DOMAIN):
                         ),
                     ): vol.All(vol.Coerce(float), vol.Range(min=1, max=200)),
                     vol.Optional("password"): str,
+                    vol.Optional("test_connection_now", default=False): cv.boolean,
                 }
             ),
             errors=errors,
@@ -504,6 +526,10 @@ class SmappeeOverviewOptionsFlow(OptionsFlow):
                     vol.Optional(
                         CONF_ADVANCED_PANEL,
                         default=entry.options.get(CONF_ADVANCED_PANEL, False),
+                    ): cv.boolean,
+                    vol.Optional(
+                        CONF_DEMO_MODE,
+                        default=entry.options.get(CONF_DEMO_MODE, False),
                     ): cv.boolean,
                     vol.Optional(
                         "reimbursement_rate_per_kwh",

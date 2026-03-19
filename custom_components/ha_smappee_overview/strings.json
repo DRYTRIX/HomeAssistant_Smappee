@@ -28,7 +28,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure Smappee Overview",
-        "description": "Adjust polling and reimbursement options. Optionally enter password to refresh tokens.",
+        "description": "Adjust polling/reliability settings. Use Test connection before saving if needed.",
         "data": {
           "update_interval": "Update interval (seconds)",
           "session_history_days": "Session history (days, 1–90)",
@@ -36,6 +36,7 @@
           "charging_park_id_override": "Charging park ID override (optional)",
           "debug_session_json_keys": "Debug session JSON keys (log + diagnostics)",
           "advanced_panel": "Allow advanced panel data (raw excerpts, coordinator state)",
+          "demo_mode": "Demo mode (show synthetic dashboard data when enabled)",
           "reimbursement_rate_per_kwh": "Reimbursement rate per kWh",
           "reimbursement_currency": "Currency",
           "belgium_cap_eur_per_kwh": "Belgium reimbursement cap (EUR/kWh, optional)",
@@ -49,7 +50,8 @@
           "peak_phase_current_warning_a": "Panel: warn if any phase current exceeds (A, optional)",
           "assistant_off_peak_price_per_kwh": "Assistant: off-peak price per kWh (optional)",
           "assistant_assumed_session_kwh": "Assistant: assumed session size (kWh)",
-          "password": "Password (optional, refreshes API token)"
+          "password": "Password (optional, refreshes API token)",
+          "test_connection_now": "Test connection now"
         }
       }
     },
@@ -73,6 +75,7 @@
           "charging_park_id_override": "Charging park ID override (optional)",
           "debug_session_json_keys": "Debug session JSON keys (log + diagnostics)",
           "advanced_panel": "Allow advanced panel data (raw excerpts, coordinator state)",
+          "demo_mode": "Demo mode (synthetic telemetry for demo/training)",
           "reimbursement_rate_per_kwh": "Reimbursement rate per kWh",
           "reimbursement_currency": "Currency",
           "belgium_cap_eur_per_kwh": "Belgium cap EUR/kWh (optional)",

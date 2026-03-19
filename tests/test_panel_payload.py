@@ -97,9 +97,13 @@ def test_build_full_panel_payload_schema(mock_hass, mock_coordinator):
     assert row["reimbursement_estimate"] == pytest.approx(0.6, rel=1e-3)
     assert "economics" in payload
     assert "diagnostics" in payload
+    assert "backend_health" in payload["diagnostics"]
+    assert "validation_warnings" in payload["diagnostics"]
     assert payload["economics"]["belgium_cap_compliant"] is True
     assert "energy_intelligence" in payload
     assert payload["energy_intelligence"]["schema_version"] == 1
+    assert "installation_timezone" in payload["meta"]
+    assert "time_window_today_utc" in payload["meta"]
 
 
 def test_sessions_enriched_cost_api_and_tariffs_all(mock_hass):

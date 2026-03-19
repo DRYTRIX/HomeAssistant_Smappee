@@ -95,6 +95,8 @@ Smappee API field names vary by firmware and product. Missing metrics show as em
 
 ## Troubleshooting
 
+Detailed guide: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+
 | Symptom | What to try |
 |--------|----------------|
 | **Re-auth / invalid auth** | Settings → Devices & services → Smappee Overview → **Reconfigure** or follow the reauth flow; confirm developer app client ID/secret still valid. |

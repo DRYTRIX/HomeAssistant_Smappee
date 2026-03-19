@@ -19,6 +19,7 @@ from ..const import (
     HTTP_TIMEOUT_CONNECT,
     HTTP_TIMEOUT_TOTAL,
 )
+from ..observability import ObservabilityStore, get_correlation_id, log_event
 from . import auth
 from .endpoints import (
     parse_alerts_payload,
@@ -39,6 +40,16 @@ from ..models import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _safe_shape(data: Any) -> dict[str, Any]:
+    """Compact, sanitized payload shape for structured logs."""
+    if isinstance(data, dict):
+        keys = list(data.keys())
+        return {"type": "dict", "keys": keys[:20], "key_count": len(keys)}
+    if isinstance(data, list):
+        return {"type": "list", "len": len(data)}
+    return {"type": type(data).__name__}
 
 
 class SmappeeApiError(Exception):
@@ -68,6 +79,7 @@ class SmappeeAPIClient:
         refresh_token_value: str,
         token_expires_at: float,
         on_token_update: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None,
+        observability: ObservabilityStore | None = None,
     ) -> None:
         self._session = session
         self._client_id = client_id
@@ -76,6 +88,7 @@ class SmappeeAPIClient:
         self._refresh_token = refresh_token_value
         self._expires_at = token_expires_at
         self._on_token_update = on_token_update
+        self._observability = observability
         self._timeout = aiohttp.ClientTimeout(
             total=HTTP_TIMEOUT_TOTAL,
             connect=HTTP_TIMEOUT_CONNECT,
@@ -127,10 +140,27 @@ class SmappeeAPIClient:
         last_err: BaseException | None = None
 
         for attempt in range(max_attempts):
+            t0 = time.monotonic()
             try:
-                return await self._request_once(
+                out = await self._request_once(
                     method_u, path, json_body=json_body, params=params
                 )
+                _LOGGER.debug(
+                    "smappee_http_ok method=%s path=%s attempt=%s duration_ms=%s shape=%s",
+                    method_u,
+                    path,
+                    attempt + 1,
+                    int((time.monotonic() - t0) * 1000),
+                    _safe_shape(out),
+                )
+                if self._observability:
+                    self._observability.mark_api_response(
+                        method=method_u,
+                        path=path,
+                        status=200,
+                        latency_ms=(time.monotonic() - t0) * 1000.0,
+                    )
+                return out
             except auth.SmappeeAuthError:
                 raise
             except SmappeeApiError as err:
@@ -139,22 +169,45 @@ class SmappeeAPIClient:
                     raise
                 ra = err.retry_after_s
                 _LOGGER.debug(
-                    "Smappee GET retry attempt=%s path=%s err=%s",
-                    attempt + 1,
+                    "smappee_http_retry method=%s path=%s attempt=%s duration_ms=%s retry_after_s=%s err=%s",
+                    method_u,
                     path,
+                    attempt + 1,
+                    int((time.monotonic() - t0) * 1000),
+                    ra,
                     err,
                 )
+                if self._observability:
+                    self._observability.capture_error(
+                        source=__name__,
+                        stage="api.retryable_error",
+                        severity="warning",
+                        kind="transport",
+                        message=str(err),
+                        correlation_id=get_correlation_id(),
+                    )
                 await self._sleep_backoff(attempt, ra)
             except (TimeoutError, aiohttp.ClientError) as err:
                 last_err = err
                 if not allow_retry:
                     raise SmappeeApiError(f"network_{type(err).__name__}") from err
                 _LOGGER.debug(
-                    "Smappee GET network retry attempt=%s path=%s err=%s",
-                    attempt + 1,
+                    "smappee_http_network_retry method=%s path=%s attempt=%s duration_ms=%s err=%s",
+                    method_u,
                     path,
+                    attempt + 1,
+                    int((time.monotonic() - t0) * 1000),
                     err,
                 )
+                if self._observability:
+                    self._observability.capture_error(
+                        source=__name__,
+                        stage="api.network_retry",
+                        severity="warning",
+                        kind="transport",
+                        message=str(err),
+                        correlation_id=get_correlation_id(),
+                    )
                 await self._sleep_backoff(attempt, None)
 
         if last_err is not None:
@@ -214,11 +267,25 @@ class SmappeeAPIClient:
         if resp.status >= 400:
             await resp.read()  # drain
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "Smappee API error method=%s url=%s status=%s",
-                    resp.method,
-                    str(resp.url).split("?", 1)[0],
-                    resp.status,
+                log_event(
+                    _LOGGER,
+                    source=__name__,
+                    stage="api.response",
+                    severity="warning",
+                    message="http error response",
+                    correlation_id=get_correlation_id(),
+                    context={
+                        "method": resp.method,
+                        "url": str(resp.url).split("?", 1)[0],
+                        "status": resp.status,
+                    },
+                )
+            if self._observability:
+                self._observability.mark_api_response(
+                    method=resp.method,
+                    path=str(resp.url).split("?", 1)[0],
+                    status=resp.status,
+                    latency_ms=0.0,
                 )
             ra_hdr = resp.headers.get("Retry-After")
             retry_after: float | None = None
@@ -239,9 +306,17 @@ class SmappeeAPIClient:
     async def get_servicelocations(self) -> list[Installation]:
         data = await self._request("GET", servicelocations_url())
         if isinstance(data, list):
-            return parse_installations(data)
+            out = parse_installations(data)
+            if self._observability and not out:
+                self._observability.mark_empty_dataset("service_locations")
+            return out
         if isinstance(data, dict):
-            return parse_installations(data)
+            out = parse_installations(data)
+            if self._observability and not out:
+                self._observability.mark_empty_dataset("service_locations")
+            return out
+        if self._observability:
+            self._observability.mark_empty_dataset("service_locations")
         return []
 
     async def get_servicelocation_detail(
@@ -254,8 +329,15 @@ class SmappeeAPIClient:
                 "GET", path, params={"extendedMode": "1"}
             )
         except SmappeeApiError as err:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Service location detail failed: %s", err)
+            log_event(
+                _LOGGER,
+                source=__name__,
+                stage="api.servicelocation_detail",
+                severity="warning",
+                message="service location detail failed",
+                correlation_id=get_correlation_id(),
+                context={"error": str(err)},
+            )
             return None
         return data if isinstance(data, dict) else None
 
@@ -263,11 +345,13 @@ class SmappeeAPIClient:
         """Fetch latest consumption; path may vary — use aggregated endpoint."""
         stale = False
         raw: dict[str, Any] = {}
+        source = "none"
         try:
             path = f"{API_V2}/servicelocation/{service_location_id}/instantaneous"
             data = await self._request("GET", path)
             if isinstance(data, dict):
                 raw = data
+                source = "instantaneous"
         except SmappeeApiError:
             try:
                 path = f"{API_V2}/servicelocation/{service_location_id}/consumption"
@@ -278,30 +362,81 @@ class SmappeeAPIClient:
                 )
                 if isinstance(data, dict):
                     raw = data
+                    source = "consumption_aggregate"
             except SmappeeApiError:
                 stale = True
+                log_event(
+                    _LOGGER,
+                    source=__name__,
+                    stage="api.consumption",
+                    severity="warning",
+                    message="both consumption endpoints failed",
+                    correlation_id=get_correlation_id(),
+                    context={"service_location_id": service_location_id},
+                )
+                if self._observability:
+                    self._observability.capture_error(
+                        source=__name__,
+                        stage="api.consumption",
+                        severity="warning",
+                        kind="transport",
+                        message="both_endpoints_failed",
+                        correlation_id=get_correlation_id(),
+                    )
         if not raw:
             stale = True
+            if source != "none":
+                log_event(
+                    _LOGGER,
+                    source=__name__,
+                    stage="api.consumption",
+                    severity="warning",
+                    message="consumption response empty",
+                    correlation_id=get_correlation_id(),
+                    context={"service_location_id": service_location_id, "source": source},
+                )
+            if self._observability:
+                self._observability.mark_empty_dataset("consumption")
+        _LOGGER.debug(
+            "smappee_consumption_snapshot service_location_id=%s stale=%s source=%s raw_shape=%s",
+            service_location_id,
+            stale,
+            source,
+            _safe_shape(raw),
+        )
         return parse_consumption_summary(raw, stale=stale)
 
     async def list_charging_stations(self, service_location_id: int) -> list[EVCharger]:
         """Discover chargers for location (best-effort)."""
         chargers: list[EVCharger] = []
-        try:
-            path = f"{API_V3}/servicelocation/{service_location_id}/chargingstations"
-            data = await self._request("GET", path)
-            rows = (
-                data
-                if isinstance(data, list)
-                else data.get("chargingStations", [])
-                if isinstance(data, dict)
-                else []
-            )
-            for row in rows:
-                if isinstance(row, dict):
+        path = f"{API_V3}/servicelocation/{service_location_id}/chargingstations"
+        data = await self._request("GET", path)
+        rows = (
+            data
+            if isinstance(data, list)
+            else data.get("chargingStations", [])
+            if isinstance(data, dict)
+            else []
+        )
+        for row in rows:
+            if isinstance(row, dict):
+                try:
                     chargers.append(parse_ev_charger(row))
-        except (SmappeeApiError, KeyError, TypeError) as err:
-            _LOGGER.debug("Charging stations list failed: %s", err)
+                except (KeyError, TypeError, ValueError) as err:
+                    _LOGGER.warning(
+                        "smappee_charger_row_skipped service_location_id=%s reason=%s",
+                        service_location_id,
+                        err,
+                    )
+                    if self._observability:
+                        self._observability.mark_parse_failure(
+                            "parse_ev_charger", "charging_stations"
+                        )
+        _LOGGER.debug(
+            "smappee_chargers_snapshot service_location_id=%s count=%s",
+            service_location_id,
+            len(chargers),
+        )
         return chargers
 
     async def get_charging_sessions(
@@ -315,6 +450,8 @@ class SmappeeAPIClient:
     ) -> list[ChargingSession]:
         serial = charging_park_id_or_serial
         sessions: list[ChargingSession] = []
+        first_err: SmappeeApiError | None = None
+        second_err: SmappeeApiError | None = None
         try:
             path = f"{API_V3}/chargingstations/{serial}/sessions"
             data = await self._request(
@@ -325,8 +462,17 @@ class SmappeeAPIClient:
             sessions = parse_charging_sessions(
                 data if isinstance(data, (list, dict)) else {}, serial
             )
-        except SmappeeApiError:
-            pass
+        except SmappeeApiError as err:
+            first_err = err
+            log_event(
+                _LOGGER,
+                source=__name__,
+                stage="api.sessions.station",
+                severity="warning",
+                message="station sessions endpoint failed",
+                correlation_id=get_correlation_id(),
+                context={"serial": serial, "error": str(err)},
+            )
         park_id = (
             charging_park_id
             if charging_park_id is not None
@@ -343,8 +489,28 @@ class SmappeeAPIClient:
                 sessions = parse_charging_sessions(
                     data if isinstance(data, (list, dict)) else {}, serial
                 )
-            except SmappeeApiError:
-                pass
+            except SmappeeApiError as err:
+                second_err = err
+                log_event(
+                    _LOGGER,
+                    source=__name__,
+                    stage="api.sessions.park",
+                    severity="warning",
+                    message="park sessions endpoint failed",
+                    correlation_id=get_correlation_id(),
+                    context={"serial": serial, "park_id": park_id, "error": str(err)},
+                )
+        if not sessions and first_err is not None and (park_id is None or second_err is not None):
+            raise second_err or first_err
+        if self._observability and not sessions:
+            self._observability.mark_empty_dataset("sessions")
+        _LOGGER.debug(
+            "smappee_sessions_snapshot serial=%s service_location_id=%s park_id=%s count=%s",
+            serial,
+            service_location_id,
+            park_id,
+            len(sessions),
+        )
         return sessions
 
     async def get_tariffs(self, service_location_id: int) -> tuple[list[TariffInfo], bool]:
@@ -358,7 +524,7 @@ class SmappeeAPIClient:
             except SmappeeApiError as err:
                 if "http_404" in str(err):
                     continue
-                return [], False
+                raise
             return parse_tariffs_payload(data), True
         return [], False
 
@@ -372,7 +538,7 @@ class SmappeeAPIClient:
             except SmappeeApiError as err:
                 if "http_404" in str(err):
                     continue
-                return [], False
+                raise
             return parse_alerts_payload(data), True
         return [], False
 

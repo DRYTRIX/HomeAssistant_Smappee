@@ -40,5 +40,8 @@ class SmappeeCoordinatorData:
     last_successful_update: datetime | None = None
     last_error: str | None = None
     api_partial: bool = False
+    backend_health: dict[str, str] = field(default_factory=dict)
+    validation_warnings: list[str] = field(default_factory=list)
+    mock_mode: bool = False
     discovery: DiscoverySnapshot = field(default_factory=DiscoverySnapshot)
     discovery_last_observed: dict[str, datetime] = field(default_factory=dict)

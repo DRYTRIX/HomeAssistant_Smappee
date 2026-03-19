@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-03-19
+
+### Added
+
+- Overview widget templates (`default`, `operations`, `compact`) with persisted drag-and-drop ordering.
+- Config/reconfigure support for `demo_mode` and a `test_connection_now` action.
+- Backend health check WebSocket endpoint: `ha_smappee_overview/health_check`.
+- Fallback/demo payload strategy so the dashboard remains populated when live telemetry is unavailable.
+
+### Changed
+
+- Panel fetch flow now throttles duplicate loads and de-duplicates history sparkline requests.
+- Store updates now avoid notifying listeners when state patches do not change values.
+- Responsive spacing and section-level styling were normalized for production UI consistency.
+
 ## [0.2.1] - 2026-03-19
 
 ### Fixed

@@ -5,8 +5,13 @@ export interface PanelMeta {
   update_interval_s: number;
   coordinator_last_update_success: boolean;
   consumption_stale: boolean;
+  correlation_id?: string | null;
   advanced_panel_allowed?: boolean;
   advanced_data_included?: boolean;
+  demo_mode?: boolean;
+  data_source?: "live" | "fallback" | "demo";
+  installation_timezone?: string | null;
+  time_window_today_utc?: { start: string; end: string };
 }
 
 export interface PanelPhaseMetrics {
@@ -250,6 +255,16 @@ export interface PanelPayload {
     installation_raw_excerpt: Record<string, unknown>;
     recent_session_errors: unknown[];
     session_json_keys_union?: string[] | null;
+    backend_health?: Record<string, string>;
+    validation_warnings?: string[];
+    observability?: Record<string, unknown>;
+  };
+  health?: {
+    connection_status?: Record<string, string>;
+    device_last_data?: Record<string, string>;
+    throughput_per_s?: number;
+    error_rate_per_s?: number;
+    alerts?: Array<Record<string, unknown>>;
   };
   chargers_extended?: Array<{
     serial: string;
@@ -306,6 +321,7 @@ export interface PanelPayload {
       };
     }>;
   };
+  __normalize_warnings?: string[];
 }
 
 export interface PanelDiscoveryNode {
@@ -342,7 +358,8 @@ export type TabId =
   | "chargers"
   | "sessions"
   | "economics"
-  | "diagnostics";
+  | "diagnostics"
+  | "health";
 
 export type ConnectionState =
   | "idle"

@@ -1,5 +1,6 @@
 import { html, type TemplateResult } from "lit";
 import { chargingReasonFromHint } from "../../logic/overviewDerived.js";
+import { logClientEvent } from "../../observability.js";
 import type { HomeAssistant } from "../../types/hass.js";
 import type { PanelPayload } from "../../types/panel.js";
 
@@ -43,7 +44,10 @@ export function renderChargerOverviewCards(
       });
       afterAction();
     } catch (e) {
-      console.error(e);
+      logClientEvent("error", "ui.overview.service_call", "overview charger service failed", {
+        service: name,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 

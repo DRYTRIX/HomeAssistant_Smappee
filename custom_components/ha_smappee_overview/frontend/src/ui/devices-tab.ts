@@ -3,6 +3,12 @@ import type {
   PanelDiscoveryNode,
   PanelPayload,
 } from "../types/panel.js";
+import type { WidgetStatus } from "../state/selectors.js";
+import {
+  renderNoDataReceivedState,
+  renderWidgetSkeleton,
+  renderWidgetStatus,
+} from "./state-ui.js";
 
 const MAX_TREE_DEPTH = 14;
 
@@ -84,18 +90,19 @@ function walkTree(
   return bits;
 }
 
-export function renderDevicesTab(p: PanelPayload): TemplateResult {
+export function renderDevicesTab(
+  p: PanelPayload,
+  widgetStatus: WidgetStatus,
+  loading = false
+): TemplateResult {
   const disc = p.discovery;
   const nodes = disc?.nodes ?? [];
   if (!disc || !nodes.length) {
     return html`
+      ${renderWidgetStatus(widgetStatus)}
       <div class="card">
         <h3 class="card-h">Devices</h3>
-        <p class="muted">
-          No devices in the discovery snapshot yet. If you have chargers, try Refresh. For hardware
-          lists, the Smappee API may omit <code>devices[]</code> — see
-          <code>docs/API_CAPTURE.md</code> in the integration repo to contribute redacted samples.
-        </p>
+        ${renderNoDataReceivedState()}
       </div>
     `;
   }
@@ -139,6 +146,8 @@ export function renderDevicesTab(p: PanelPayload): TemplateResult {
   const metaOk = p.meta?.coordinator_last_update_success !== false;
 
   return html`
+    ${renderWidgetStatus(widgetStatus)}
+    ${loading ? renderWidgetSkeleton(2) : ""}
     <div class="devices-root">
       ${disc.partial || disc.notes?.length
         ? html`

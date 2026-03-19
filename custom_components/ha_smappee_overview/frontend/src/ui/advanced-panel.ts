@@ -107,11 +107,13 @@ export function renderAdvancedPanel(p: PanelPayload): TemplateResult {
       ${allowed && included && adv
         ? html`
             <details class="adv-details">
-              <summary>Raw API excerpts</summary>
+              <summary>Raw JSON</summary>
               <pre class="json-pre">${JSON.stringify(adv.raw_excerpts, null, 2)}</pre>
             </details>
             <details class="adv-details">
-              <summary>Debug</summary>
+              <summary>Processed values</summary>
+              <p class="small">Consumption (processed)</p>
+              <pre class="json-pre">${JSON.stringify(p.consumption ?? {}, null, 2)}</pre>
               <p class="small">
                 Stale: ${(p.diagnostics?.stale_sections ?? []).join(", ") || "—"}
               </p>
@@ -129,7 +131,10 @@ export function renderAdvancedPanel(p: PanelPayload): TemplateResult {
               )}</pre>
             </details>
             <details class="adv-details">
-              <summary>Coordinator state</summary>
+              <summary>Widget bindings</summary>
+              <p class="small">Entity map bindings</p>
+              <pre class="json-pre">${JSON.stringify(p.entity_map ?? {}, null, 2)}</pre>
+              <p class="small">Coordinator state</p>
               <pre class="json-pre">${JSON.stringify(
                 adv.coordinator_state,
                 null,

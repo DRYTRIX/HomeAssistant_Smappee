@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..models import DiscoveryEdge, DiscoveryNode, DiscoverySnapshot, EVCharger, Installation
+from ..time_utils import parse_utc_epoch_ms
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -106,11 +107,9 @@ def _parse_last_seen_ms(row: dict[str, Any]) -> datetime | None:
         v = row.get(key)
         if v is None:
             continue
-        try:
-            ms = int(v)
-            return datetime.fromtimestamp(ms / 1000.0, tz=UTC)
-        except (TypeError, ValueError, OSError):
-            continue
+        ts = parse_utc_epoch_ms(v)
+        if ts is not None:
+            return ts
     return None
 
 

@@ -6,7 +6,9 @@ import {
   type MetricSource,
 } from "../../logic/overviewDerived.js";
 import type { PanelPayload } from "../../types/panel.js";
+import { deriveWidgetStatus } from "../../state/selectors.js";
 import { renderSparkline } from "../sparkline.js";
+import { renderWidgetStatus } from "../state-ui.js";
 import { renderLineageBadge } from "./data-lineage-badge.js";
 
 function lineageForSource(s: MetricSource): "live" | "calculated" | "config" {
@@ -66,7 +68,9 @@ export function renderKpiCards(
   narrow: boolean
 ): TemplateResult {
   const k = buildOverviewKpis(p);
+  const status = deriveWidgetStatus(p, "device");
   return html`
+    ${renderWidgetStatus(status)}
     <div class="sov-kpi-premium-grid">
       ${kpiCard(
         "Consumption",

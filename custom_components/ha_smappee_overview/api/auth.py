@@ -14,6 +14,7 @@ from ..const import (
     HTTP_TIMEOUT_TOTAL,
     OAUTH_TOKEN_PATH,
 )
+from .contracts import ContractValidationError, OAuthTokenContract, parse_contract
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,7 +59,10 @@ async def fetch_token_password(
         "password": password,
     }
     async with session.post(url, data=data, timeout=_OAUTH_TIMEOUT) as resp:
-        body = await resp.json(content_type=None)
+        try:
+            body = await resp.json(content_type=None)
+        except Exception as err:
+            raise SmappeeAuthError("token_invalid_json") from err
         if resp.status != 200:
             _LOGGER.warning(
                 "Smappee token error: http_status=%s summary=%s",
@@ -70,7 +74,11 @@ async def fetch_token_password(
                 if isinstance(body, dict)
                 else "token_failed"
             )
-        return body
+        try:
+            contract = parse_contract(OAuthTokenContract, body)
+        except ContractValidationError as err:
+            raise SmappeeAuthError("token_invalid_payload") from err
+        return contract.model_dump(exclude_none=True)
 
 
 async def refresh_token(
@@ -88,7 +96,10 @@ async def refresh_token(
         "refresh_token": refresh_token_value,
     }
     async with session.post(url, data=data, timeout=_OAUTH_TIMEOUT) as resp:
-        body = await resp.json(content_type=None)
+        try:
+            body = await resp.json(content_type=None)
+        except Exception as err:
+            raise SmappeeAuthError("refresh_invalid_json") from err
         if resp.status != 200:
             _LOGGER.warning(
                 "Smappee refresh error: http_status=%s summary=%s",
@@ -100,7 +111,11 @@ async def refresh_token(
                 if isinstance(body, dict)
                 else "refresh_failed"
             )
-        return body
+        try:
+            contract = parse_contract(OAuthTokenContract, body)
+        except ContractValidationError as err:
+            raise SmappeeAuthError("refresh_invalid_payload") from err
+        return contract.model_dump(exclude_none=True)
 
 
 def token_expires_at(body: dict[str, Any]) -> float:

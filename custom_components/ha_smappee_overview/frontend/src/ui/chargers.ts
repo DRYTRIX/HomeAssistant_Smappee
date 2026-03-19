@@ -1,9 +1,16 @@
 import { html, type TemplateResult } from "lit";
 import { explanationForConnector } from "../logic/chargingExplanation.js";
+import { logClientEvent } from "../observability.js";
 import { selectChargerLoadBalance } from "../state/selectors.js";
 import type { HomeAssistant } from "../types/hass.js";
 import type { PanelPayload, PanelSessionEnriched } from "../types/panel.js";
+import type { WidgetStatus } from "../state/selectors.js";
 import { renderChargingExplanationBlock } from "./charging-explanation-ui.js";
+import {
+  renderNoDataReceivedState,
+  renderWidgetSkeleton,
+  renderWidgetStatus,
+} from "./state-ui.js";
 
 const DOMAIN = "ha_smappee_overview";
 
@@ -11,7 +18,9 @@ export function renderChargersTab(
   p: PanelPayload,
   hass: HomeAssistant,
   entryId: string,
-  afterAction: () => void
+  afterAction: () => void,
+  widgetStatus: WidgetStatus,
+  loading = false
 ): TemplateResult {
   const active = [...p.sessions_active, ...(p.sessions_enriched ?? [])].filter(
     (s, i, a) => a.findIndex((x) => x.id === s.id) === i
@@ -31,21 +40,27 @@ export function renderChargersTab(
       });
       afterAction();
     } catch (e) {
-      console.error(e);
+      logClientEvent("error", "ui.chargers.service_call", "charger service call failed", {
+        service: name,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
   if (!p.chargers?.length) {
-    return html`<p class="muted">No chargers discovered.</p>`;
+    return html`${renderWidgetStatus(widgetStatus)} ${renderNoDataReceivedState()}`;
   }
 
   return html`
+    ${renderWidgetStatus(widgetStatus)}
+    ${loading ? renderWidgetSkeleton(2) : ""}
     <div class="charger-list">
       ${p.chargers.map((ch) => {
         const feat = p.charger_features?.[ch.serial];
         const lb = selectChargerLoadBalance(p, ch.serial);
         return html`
           <div class="card charger-card">
+            ${renderWidgetStatus(widgetStatus)}
             <div class="charger-head">
               <h3>${ch.name}</h3>
               <span class="chip ${ch.availability ? "ok" : "off"}"

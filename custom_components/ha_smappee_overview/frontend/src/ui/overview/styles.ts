@@ -7,6 +7,47 @@ export const overviewSectionStyles = css`
     flex-direction: column;
     gap: 16px;
   }
+  .sov-widget-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 10px 12px;
+    padding: 10px 12px;
+    margin-bottom: 0;
+  }
+  .sov-widget-toolbar label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--secondary-text-color);
+  }
+  .sov-widget-grid {
+    display: grid;
+    gap: 14px;
+  }
+  .sov-widget {
+    border: 1px dashed color-mix(in srgb, var(--divider-color) 75%, transparent);
+    border-radius: 12px;
+    padding: 10px;
+    transition: border-color 0.2s ease;
+  }
+  .sov-widget--drop-target {
+    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 6%, transparent);
+  }
+  .sov-widget-head {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+  }
+  .sov-widget-handle {
+    font-size: 12px;
+    color: var(--secondary-text-color);
+    user-select: none;
+    cursor: grab;
+  }
   .sov-visually-hidden {
     position: absolute;
     width: 1px;

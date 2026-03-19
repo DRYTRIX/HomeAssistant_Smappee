@@ -28,6 +28,7 @@ CONF_MAX_SESSION_CHARGERS: Final = "max_session_chargers"
 CONF_CHARGING_PARK_ID_OVERRIDE: Final = "charging_park_id_override"
 CONF_DEBUG_SESSION_JSON_KEYS: Final = "debug_session_json_keys"
 CONF_ADVANCED_PANEL: Final = "advanced_panel"
+CONF_DEMO_MODE: Final = "demo_mode"
 CONF_PEAK_PHASE_CURRENT_WARNING_A: Final = "peak_phase_current_warning_a"
 CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH: Final = "assistant_off_peak_price_per_kwh"
 CONF_ASSISTANT_ASSUMED_SESSION_KWH: Final = "assistant_assumed_session_kwh"
@@ -81,3 +82,10 @@ DATA_WEBSOCKET_CMD: Final = "websocket_cmd_registered"
 # WebSocket
 WS_TYPE_PANEL_DATA: Final = f"{DOMAIN}/get_panel_data"
 WS_TYPE_LIST_ENTRIES: Final = f"{DOMAIN}/list_entries"
+
+# Panel payload cache
+PANEL_CACHE_TTL_S: Final = 15
+
+# Environment toggles
+ENV_MOCK_DATA: Final = "HASS_SMAPPEE_MOCK_DATA"
+WS_TYPE_HEALTH_CHECK: Final = f"{DOMAIN}/health_check"

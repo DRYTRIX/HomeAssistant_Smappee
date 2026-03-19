@@ -156,6 +156,8 @@ def panel_data_dict(d: SmappeeCoordinatorData) -> dict[str, Any]:
         else None,
         "last_error": d.last_error,
         "api_partial": d.api_partial,
+        "backend_health": dict(d.backend_health),
+        "validation_warnings": list(d.validation_warnings),
     }
 
 

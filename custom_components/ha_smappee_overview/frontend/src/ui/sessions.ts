@@ -5,6 +5,8 @@ import type {
   PanelSessionEnriched,
 } from "../types/panel.js";
 import type { SessionsFilters } from "../state/store.js";
+import type { WidgetStatus } from "../state/selectors.js";
+import { renderStateError, renderWidgetSkeleton, renderWidgetStatus } from "./state-ui.js";
 
 function formatApiCost(r: PanelSessionEnriched): string {
   if (r.cost_api_amount == null) return "—";
@@ -93,7 +95,10 @@ export function renderSessionsTab(
   tabOpts: SessionsTabOptions,
   onFilter: (f: Partial<SessionsFilters>) => void,
   onSort: (col: string) => void,
-  onExport: () => void
+  onExport: () => void,
+  widgetStatus: WidgetStatus,
+  activePreset: "live" | "5m" | "1h" | "24h",
+  loading = false
 ): TemplateResult {
   let rows = selectFilteredSessions(p, filters);
   rows = sortRows(rows, sort.column, sort.dir);
@@ -171,6 +176,8 @@ export function renderSessionsTab(
   };
 
   return html`
+    ${renderWidgetStatus(widgetStatus)}
+    ${loading ? renderWidgetSkeleton(2) : ""}
     ${p.api_partial
       ? html`<div class="banner">
           Session list may be incomplete (partial API data).
@@ -180,6 +187,7 @@ export function renderSessionsTab(
       Showing ${rows.length} of ${allCount} session(s) in this payload.
     </p>
     <div class="sessions-toolbar card">
+      <p class="muted small">Active range: ${activePreset}</p>
       <div class="toolbar-row">
         <label class="sess-toggle">
           <input
@@ -262,6 +270,20 @@ export function renderSessionsTab(
           />
         </label>
       </div>
+      <button
+        type="button"
+        class="btn secondary"
+        @click=${() =>
+          onFilter({
+            chargerSerial: undefined,
+            userQuery: undefined,
+            mode: undefined,
+            periodStart: undefined,
+            periodEnd: undefined,
+          })}
+      >
+        Clear filters
+      </button>
       <button
         type="button"
         class="btn secondary"
@@ -349,9 +371,7 @@ export function renderSessionsTab(
         <tbody>
           ${rows.length === 0
             ? html`<tr>
-                <td colspan=${COL_COUNT} class="muted">
-                  No sessions match filters.
-                </td>
+                <td colspan=${COL_COUNT}>${renderStateError("error_no_data_range")}</td>
               </tr>`
             : groups.flatMap((g) => [
                 g.label

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ha_smappee_overview.api.endpoints import (
+    parse_ev_charger,
     parse_alerts_payload,
     parse_charging_session,
     parse_consumption_summary,
@@ -160,3 +161,47 @@ def test_parse_charging_session_alt_cost_keys() -> None:
     assert s is not None
     assert s.cost_amount == 1.5
     assert s.cost_currency == "USD"
+
+
+def test_parse_charging_session_epoch_seconds_timestamp() -> None:
+    s = parse_charging_session(
+        {
+            "id": "s-seconds",
+            "startTime": 1_725_000_000,
+            "endTime": 1_725_000_900,
+        },
+        "SN",
+    )
+    assert s is not None
+    assert s.start is not None
+    assert s.end is not None
+    assert s.start.year >= 2024
+
+
+def test_parse_submeter_uses_row_values_not_top_level() -> None:
+    c = parse_consumption_summary(
+        {
+            "power": 9999,
+            "loads": [{"id": "1", "name": "L1", "power": 150.0, "energy": 900.0}],
+        },
+        stale=False,
+    )
+    assert len(c.submeters) == 1
+    assert c.submeters[0].power_w == 150.0
+    assert c.submeters[0].energy_wh == 900.0
+
+
+def test_parse_ev_charger_string_false_available() -> None:
+    ch = parse_ev_charger({"serialNumber": "ABC", "available": "false"})
+    assert ch.availability is False
+
+
+def test_parse_charging_session_invalid_connector_position_returns_none() -> None:
+    s = parse_charging_session({"id": "bad", "connectorPosition": "oops"}, "SN")
+    assert s is None
+
+
+def test_parse_alert_timestamp_out_of_range_is_none() -> None:
+    alerts = parse_alerts_payload([{"id": "1", "message": "x", "timestamp": 99_999_999_999_999}])
+    assert len(alerts) == 1
+    assert alerts[0].created_at is None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,6 +23,7 @@ from .const import (
     CONF_ASSISTANT_OFF_PEAK_PRICE_PER_KWH,
     CONF_COUNTRY_CODE,
     CONF_DEBUG_SESSION_JSON_KEYS,
+    CONF_DEMO_MODE,
     CONF_PEAK_PHASE_CURRENT_WARNING_A,
     CONF_UPDATE_INTERVAL,
     DEFAULT_ASSISTANT_ASSUMED_SESSION_KWH,
@@ -36,6 +38,9 @@ from .coordinator_data import SmappeeCoordinatorData
 from .models import ChargingSession, EVCharger, ReimbursementConfig, TariffInfo
 from .panel_entity_map import build_entity_map
 from .panel_serialize import build_discovery_payload, panel_data_dict, session_to_dict
+from .observability import get_correlation_id
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _effective_mode_from_session(s: ChargingSession) -> str | None:
@@ -318,6 +323,62 @@ def _find_connector(
     return None, None
 
 
+def _inject_fallback_payload(base: dict[str, Any], *, demo_mode: bool) -> None:
+    """Ensure panel payload remains useful when live data is absent."""
+    has_consumption = isinstance(base.get("consumption"), dict)
+    has_chargers = bool(base.get("chargers"))
+    has_sessions = bool(base.get("sessions_active")) or bool(base.get("sessions_recent"))
+    if not demo_mode and (has_consumption or has_chargers or has_sessions):
+        return
+
+    now = datetime.now(UTC)
+    hour = now.hour + (now.minute / 60.0)
+    solar = max(0.0, 3600.0 * (1.0 - abs(hour - 13.0) / 6.0))
+    home = 1200.0 + (900.0 if 18 <= hour <= 22 else 250.0)
+    ev = 3200.0 if 19 <= hour <= 23 else 0.0
+    grid_import = max(0.0, home + ev - solar)
+    grid_export = max(0.0, solar - (home + ev))
+    base["consumption"] = {
+        "timestamp": now.isoformat(),
+        "stale": False,
+        "grid_import_w": round(grid_import, 1),
+        "grid_export_w": round(grid_export, 1),
+        "solar_w": round(solar, 1),
+        "consumption_w": round(home + ev, 1),
+        "battery_flow_w": -450.0 if grid_export > 0 else 380.0,
+        "self_consumption_pct": 68.0,
+        "self_sufficiency_pct": 57.0,
+        "battery_soc_pct": 61.0,
+        "phase_metrics": None,
+        "submeters": [],
+    }
+    if demo_mode:
+        base["chargers"] = base.get("chargers") or [
+            {
+                "serial": "demo-charger-01",
+                "name": "Demo Charger",
+                "availability": True,
+                "connectors": [
+                    {
+                        "position": 1,
+                        "mode": "SMART",
+                        "current_a": 12.0 if ev > 0 else 0.0,
+                        "session_active": ev > 0,
+                    }
+                ],
+            }
+        ]
+        base["sessions_active"] = base.get("sessions_active") or []
+        base["sessions_recent"] = base.get("sessions_recent") or []
+    base["alerts"] = base.get("alerts") or [
+        {
+            "id": "fallback_data",
+            "message": "Showing fallback data while live telemetry is unavailable.",
+            "severity": "info",
+        }
+    ]
+
+
 def _sessions_for_ev_hints(
     sessions_active: list[ChargingSession],
     sessions_recent: list[ChargingSession],
@@ -576,6 +637,7 @@ def build_full_panel_payload(
 
     inst = d.installation
     inst_excerpt = _raw_excerpt(inst.raw, 25) if inst and inst.raw else {}
+    today_start_utc, now_utc = _today_bounds_utc()
 
     update_s = int(
         opt.get(CONF_UPDATE_INTERVAL)
@@ -718,6 +780,9 @@ def build_full_panel_payload(
 
     advanced_allowed = bool(opt.get(CONF_ADVANCED_PANEL))
     advanced_included = advanced_allowed and include_advanced_requested
+    demo_mode = bool(opt.get(CONF_DEMO_MODE))
+    observability_snapshot = coordinator.observability.snapshot()
+    local_alerts = list(coordinator.observability_alerts)
 
     v2: dict[str, Any] = {
         "schema_version": 2,
@@ -729,6 +794,14 @@ def build_full_panel_payload(
             "consumption_stale": bool(d.consumption and d.consumption.stale),
             "advanced_panel_allowed": advanced_allowed,
             "advanced_data_included": advanced_included,
+            "demo_mode": demo_mode,
+            "data_source": "live",
+            "correlation_id": get_correlation_id(),
+            "installation_timezone": inst.timezone if inst else None,
+            "time_window_today_utc": {
+                "start": today_start_utc.isoformat(),
+                "end": now_utc.isoformat(),
+            },
         },
         "entity_map": build_entity_map(hass, entry),
         "sessions_enriched": sessions_enriched,
@@ -752,6 +825,7 @@ def build_full_panel_payload(
         "diagnostics": {
             "api_partial": d.api_partial,
             "last_error": d.last_error,
+            "mock_mode": d.mock_mode,
             "installation_features": base.get("installation_features"),
             "charger_features_summary": base.get("charger_features"),
             "unsupported_connectors": unsupported_connectors,
@@ -761,6 +835,20 @@ def build_full_panel_payload(
             "session_json_keys_union": session_key_union,
             "discovery_partial": d.discovery.partial,
             "discovery_node_count": len(d.discovery.nodes),
+            "backend_health": dict(d.backend_health),
+            "validation_warnings": list(d.validation_warnings),
+            "observability": observability_snapshot,
+        },
+        "health": {
+            "connection_status": observability_snapshot.get("connection_status", {}),
+            "device_last_data": observability_snapshot.get("device_last_data", {}),
+            "throughput_per_s": observability_snapshot.get("rates", {}).get(
+                "data_processed_per_s", 0
+            ),
+            "error_rate_per_s": observability_snapshot.get("rates", {}).get(
+                "error_rate_per_s", 0
+            ),
+            "alerts": local_alerts,
         },
         "chargers_extended": chargers_lb,
         "overview_context": overview_context,
@@ -768,6 +856,20 @@ def build_full_panel_payload(
         "discovery": discovery_payload,
     }
     base.update(v2)
+    _inject_fallback_payload(base, demo_mode=demo_mode)
+    if demo_mode:
+        base["meta"]["data_source"] = "demo"
+    elif not d.consumption:
+        base["meta"]["data_source"] = "fallback"
+    _LOGGER.debug(
+        "smappee_panel_payload entry_id=%s partial=%s chargers=%s sessions_active=%s sessions_recent=%s has_consumption=%s",
+        coordinator.config_entry.entry_id,
+        d.api_partial,
+        len(d.chargers),
+        len(d.sessions_active),
+        len(d.sessions_recent),
+        bool(d.consumption),
+    )
     if advanced_included:
         base["advanced"] = _build_advanced_payload(coordinator, d, update_s)
     return base

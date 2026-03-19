@@ -1,6 +1,8 @@
 import { html, type TemplateResult } from "lit";
 import { selectAllSessions } from "../state/selectors.js";
+import type { WidgetStatus } from "../state/selectors.js";
 import type { PanelPayload, PanelSessionEnriched } from "../types/panel.js";
+import { renderWidgetSkeleton, renderWidgetStatus } from "./state-ui.js";
 
 export type EconomicsPeriod = "today" | "month" | "year";
 
@@ -49,7 +51,9 @@ function filterByYear(
 export function renderEconomicsTab(
   p: PanelPayload,
   period: EconomicsPeriod,
-  onPeriod: (p: EconomicsPeriod) => void
+  onPeriod: (p: EconomicsPeriod) => void,
+  widgetStatus: WidgetStatus,
+  loading = false
 ): TemplateResult {
   const cur = p.reimbursement?.currency ?? "EUR";
   const cap = p.reimbursement?.belgium_cap;
@@ -220,6 +224,8 @@ export function renderEconomicsTab(
   }
 
   return html`
+    ${renderWidgetStatus(widgetStatus)}
+    ${loading ? renderWidgetSkeleton(2) : ""}
     ${beBadge}
     <nav class="econ-period-tabs" aria-label="Economics period">
       ${tabBtn("today", "Today")} ${tabBtn("month", "Month")}

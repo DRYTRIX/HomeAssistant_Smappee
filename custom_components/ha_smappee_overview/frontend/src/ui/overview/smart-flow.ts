@@ -1,7 +1,9 @@
 import { html, type TemplateResult } from "lit";
 import { buildFlowModel } from "../../logic/overviewDerived.js";
+import { deriveWidgetStatus } from "../../state/selectors.js";
 import type { PanelPayload } from "../../types/panel.js";
 import { renderLineageBadge } from "./data-lineage-badge.js";
+import { renderWidgetSkeleton, renderWidgetStatus } from "../state-ui.js";
 
 function nodeClass(kind: string): string {
   if (kind === "grid") return "sov-sf-node--grid";
@@ -11,15 +13,22 @@ function nodeClass(kind: string): string {
   return "sov-sf-node--home";
 }
 
-export function renderSmartFlow(p: PanelPayload): TemplateResult {
+export function renderSmartFlow(
+  p: PanelPayload,
+  loading = false
+): TemplateResult {
   const { nodes, hasConsumption } = buildFlowModel(p);
+  const status = deriveWidgetStatus(p, "device");
   if (!hasConsumption) {
     return html`
       <div class="card sov-smart-flow sov-smart-flow--empty">
         <div class="sov-section-head">
           <h2 class="sov-h2">Energy flow</h2>
         </div>
-        <p class="muted">No live consumption snapshot yet.</p>
+        ${renderWidgetStatus(status)}
+        ${loading
+          ? renderWidgetSkeleton(2)
+          : html`<p class="muted">No live consumption snapshot yet.</p>`}
       </div>
     `;
   }
@@ -46,6 +55,7 @@ export function renderSmartFlow(p: PanelPayload): TemplateResult {
         <h2 class="sov-h2">Energy flow</h2>
         ${renderLineageBadge("live")}
       </div>
+      ${renderWidgetStatus(status)}
       <p class="muted small sov-sf-hint">
         Flow arrows show direction of power. EV power is estimated when a session is active.
       </p>

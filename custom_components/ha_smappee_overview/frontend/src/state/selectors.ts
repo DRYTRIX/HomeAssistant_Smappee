@@ -1,6 +1,83 @@
 import type { PanelPayload, PanelSessionEnriched } from "../types/panel.js";
 import type { SessionsFilters } from "./store.js";
 
+export type DashboardUiState =
+  | "loading"
+  | "ready"
+  | "empty_no_devices"
+  | "empty_time_range"
+  | "error_connection"
+  | "error_no_data_range"
+  | "error_parsing"
+  | "partial";
+
+export type DataFreshness = "live" | "stale" | "offline";
+
+export interface WidgetStatus {
+  lastUpdate: string | null;
+  freshness: DataFreshness;
+  source: "device" | "protocol";
+}
+
+function parseMaybeDate(v?: string | null): number | null {
+  if (!v) return null;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+export function deriveWidgetStatus(
+  p: PanelPayload | null,
+  source: "device" | "protocol" = "device"
+): WidgetStatus {
+  const last =
+    p?.consumption?.timestamp ??
+    p?.last_successful_update ??
+    p?.discovery?.generated_at ??
+    null;
+  const ts = parseMaybeDate(last);
+  if (!ts) {
+    return { lastUpdate: null, freshness: "offline", source };
+  }
+  const ageMs = Date.now() - ts;
+  const staleHint =
+    p?.consumption?.stale ||
+    p?.meta?.consumption_stale ||
+    p?.meta?.coordinator_last_update_success === false;
+  if (staleHint || ageMs > 10 * 60 * 1000) {
+    return { lastUpdate: last, freshness: "stale", source };
+  }
+  return { lastUpdate: last, freshness: "live", source };
+}
+
+export function selectDashboardUiState(
+  p: PanelPayload | null,
+  connection: "idle" | "loading" | "connected" | "error" | "reconnecting",
+  panelError: string | null,
+  filters?: SessionsFilters
+): DashboardUiState {
+  if (connection === "loading" && !p) return "loading";
+  if (connection === "error") return "error_connection";
+  if (panelError?.toLowerCase().includes("parse")) return "error_parsing";
+  if (!p) return "error_connection";
+  const hasAnyData =
+    Boolean(p.consumption) ||
+    (p.chargers?.length ?? 0) > 0 ||
+    (p.sessions_active?.length ?? 0) > 0 ||
+    (p.sessions_recent?.length ?? 0) > 0;
+  if (!hasAnyData) return "empty_no_devices";
+  if (filters?.periodStart || filters?.periodEnd) {
+    const filtered = selectFilteredSessions(p, filters);
+    if (!filtered.length) return "error_no_data_range";
+  }
+  if (p.api_partial) return "partial";
+  return "ready";
+}
+
+export function formatIsoLocal(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return iso.replace("T", " ").slice(0, 19);
+}
+
 export function selectFlowSummary(p: PanelPayload | null) {
   const c = p?.consumption;
   return {
@@ -62,7 +139,9 @@ export function selectFilteredSessions(
     });
   }
   if (f.periodEnd) {
-    const t = new Date(f.periodEnd).getTime();
+    const dt = new Date(f.periodEnd);
+    dt.setHours(23, 59, 59, 999);
+    const t = dt.getTime();
     rows = rows.filter((r) => {
       if (!r.start) return false;
       return new Date(r.start).getTime() <= t;
@@ -85,6 +164,10 @@ export function selectBelgiumCapOk(p: PanelPayload | null): boolean | null {
 
 export function selectStaleBanner(p: PanelPayload | null): string | null {
   if (!p) return null;
+  if (p.meta?.data_source === "demo") return "Demo mode is active. Values are synthetic.";
+  if (p.meta?.data_source === "fallback") {
+    return "Live data unavailable. Showing fallback telemetry.";
+  }
   if (p.api_partial) return "Some data from the Smappee API is partial or failed to load.";
   if (p.consumption?.stale) return "Live consumption data may be stale.";
   if (p.meta?.consumption_stale) return "Consumption marked stale by coordinator.";

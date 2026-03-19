@@ -7,6 +7,8 @@ import type {
 
 const STORAGE_KEY = "smappee_panel_entry";
 const STORAGE_ADVANCED = "smappee_panel_advanced";
+const STORAGE_DEBUG = "smappee_panel_debug";
+const STORAGE_OVERVIEW_LAYOUT = "smappee_panel_overview_layout";
 
 export interface SessionsFilters {
   chargerSerial?: string;
@@ -32,8 +34,12 @@ export interface SmappeeStoreState {
   sessionsExpandedRowId: string | null;
   sessionsGroupByDay: boolean;
   economicsPeriod: "today" | "month" | "year";
+  timePreset: "live" | "5m" | "1h" | "24h";
   /** UI-only: request include_advanced on panel WS when integration allows */
   advancedMode: boolean;
+  debugMode: boolean;
+  overviewTemplate: "default" | "operations" | "compact";
+  overviewOrder: string[];
 }
 
 export type Listener = () => void;
@@ -45,6 +51,11 @@ export function createSmappeeStore(defaultEntryId: string): {
   loadStoredEntry: () => string;
   persistEntry: (id: string) => void;
   persistAdvancedMode: (on: boolean) => void;
+  persistDebugMode: (on: boolean) => void;
+  persistOverviewLayout: (
+    template: SmappeeStoreState["overviewTemplate"],
+    order: string[]
+  ) => void;
 } {
   let stored = defaultEntryId;
   try {
@@ -57,6 +68,35 @@ export function createSmappeeStore(defaultEntryId: string): {
   let advStored = false;
   try {
     advStored = sessionStorage.getItem(STORAGE_ADVANCED) === "1";
+  } catch {
+    /* ignore */
+  }
+  let debugStored = false;
+  try {
+    debugStored = sessionStorage.getItem(STORAGE_DEBUG) === "1";
+  } catch {
+    /* ignore */
+  }
+  let layoutTemplate: SmappeeStoreState["overviewTemplate"] = "default";
+  let layoutOrder: string[] = ["flow_kpi", "insights", "assistant", "economics", "chargers"];
+  try {
+    const raw = sessionStorage.getItem(STORAGE_OVERVIEW_LAYOUT);
+    if (raw) {
+      const parsed = JSON.parse(raw) as {
+        template?: SmappeeStoreState["overviewTemplate"];
+        order?: string[];
+      };
+      if (
+        parsed.template === "default" ||
+        parsed.template === "operations" ||
+        parsed.template === "compact"
+      ) {
+        layoutTemplate = parsed.template;
+      }
+      if (Array.isArray(parsed.order) && parsed.order.every((x) => typeof x === "string")) {
+        layoutOrder = parsed.order;
+      }
+    }
   } catch {
     /* ignore */
   }
@@ -77,7 +117,11 @@ export function createSmappeeStore(defaultEntryId: string): {
     sessionsExpandedRowId: null,
     sessionsGroupByDay: false,
     economicsPeriod: "today",
+    timePreset: "live",
     advancedMode: advStored,
+    debugMode: debugStored,
+    overviewTemplate: layoutTemplate,
+    overviewOrder: layoutOrder,
   };
 
   const listeners = new Set<Listener>();
@@ -89,7 +133,16 @@ export function createSmappeeStore(defaultEntryId: string): {
       return () => listeners.delete(fn);
     },
     setState: (patch) => {
-      state = { ...state, ...patch };
+      const next = { ...state, ...patch };
+      let changed = false;
+      for (const key of Object.keys(patch) as Array<keyof SmappeeStoreState>) {
+        if (state[key] !== next[key]) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return;
+      state = next;
       listeners.forEach((l) => l());
     },
     loadStoredEntry: () => stored || defaultEntryId,
@@ -109,6 +162,29 @@ export function createSmappeeStore(defaultEntryId: string): {
         /* ignore */
       }
       state = { ...state, advancedMode: on };
+      listeners.forEach((l) => l());
+    },
+    persistDebugMode: (on) => {
+      try {
+        if (on) sessionStorage.setItem(STORAGE_DEBUG, "1");
+        else sessionStorage.removeItem(STORAGE_DEBUG);
+      } catch {
+        /* ignore */
+      }
+      state = { ...state, debugMode: on };
+      listeners.forEach((l) => l());
+    },
+    persistOverviewLayout: (template, order) => {
+      const nextOrder = [...order];
+      try {
+        sessionStorage.setItem(
+          STORAGE_OVERVIEW_LAYOUT,
+          JSON.stringify({ template, order: nextOrder })
+        );
+      } catch {
+        /* ignore */
+      }
+      state = { ...state, overviewTemplate: template, overviewOrder: nextOrder };
       listeners.forEach((l) => l());
     },
   };
