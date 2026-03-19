@@ -7,6 +7,10 @@ HACS-ready Home Assistant custom integration with a **Smappee Overview** sidebar
 - Home Assistant **2024.8+**
 - Smappee **developer app** (client ID & secret) and your Smappee account credentials
 
+## HACS / GitHub metadata
+
+If you fork this repo or run [HACS Action](https://github.com/hacs/action) and see failures for **description**, **topics**, or **brands**, see [docs/HACS_GITHUB_SETUP.md](docs/HACS_GITHUB_SETUP.md). Brand icon: `custom_components/ha_smappee_overview/brand/icon.png`.
+
 ## Install (HACS)
 
 1. Add this repository as a [custom repository](https://hacs.xyz/docs/faq/custom_repositories/) (type: Integration).
