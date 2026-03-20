@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-03-20
+
+### Fixed
+
+- Panel economics (`today_kwh`, `today_pending_eur`, `today_charging_cost_estimate_eur`): include sessions whose start time falls anywhere on the current **UTC calendar day**. Previously the window ended at “now”, so early-morning runs (and CI) could omit same-day sessions with a later start time.
+
 ## [0.3.1] - 2026-03-19
 
 ### Added

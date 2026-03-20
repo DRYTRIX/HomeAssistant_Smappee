@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -116,6 +116,13 @@ def _today_bounds_utc() -> tuple[datetime, datetime]:
     return start, now
 
 
+def _today_calendar_bounds_utc() -> tuple[datetime, datetime]:
+    """Start of today (UTC) and start of tomorrow — for filtering sessions on calendar day."""
+    now = datetime.now(UTC)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start, start + timedelta(days=1)
+
+
 def _session_in_range(
     s: ChargingSession, start: datetime, end: datetime
 ) -> bool:
@@ -124,7 +131,7 @@ def _session_in_range(
     t = s.start
     if t.tzinfo is None:
         t = t.replace(tzinfo=UTC)
-    return start <= t <= end
+    return start <= t < end
 
 
 def _compute_today_economics(
@@ -132,7 +139,7 @@ def _compute_today_economics(
     reim_rate: float | None,
     belgium_cap: float | None,
 ) -> tuple[float, float]:
-    start, end = _today_bounds_utc()
+    start, end = _today_calendar_bounds_utc()
     total_kwh = 0.0
     for s in sessions:
         if not _session_in_range(s, start, end):
@@ -153,7 +160,7 @@ def _compute_today_charging_cost_estimate(
     """Sum primary-tariff cost estimate for sessions that started today (UTC)."""
     if tariff_per_kwh is None:
         return None
-    start, end = _today_bounds_utc()
+    start, end = _today_calendar_bounds_utc()
     total = 0.0
     any_energy = False
     for s in sessions:
